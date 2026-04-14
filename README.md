@@ -14,11 +14,14 @@ Keep it open in a terminal tab. It polls your open PRs across configured GitHub 
 
 - `r` rebases. Drops into a real local `git rebase` so your YubiKey signs the commits. Returns to the TUI after a few seconds on success.
 - `m` posts `/m` as a PR comment. The bot does the fast-forward merge.
-- `a` toggles auto-merge. When enabled, the tool posts `/m` automatically once the PR is ready (synced, CI pass, approved). Gives up after 3 attempts. Persists across restarts.
-- `t` re-runs failed CI jobs.
+- `a` toggles automerge. Posts `/m` automatically when the PR is ready. Gives up after 3 attempts (counted from actual `/m` comments on the PR).
+- `A` toggles autorerun. Re-runs failed CI jobs automatically. Gives up based on workflow `run_attempt` from the GitHub API.
+- `t` re-runs failed CI jobs manually.
 - `Enter` opens the PR in your browser.
 
-Desktop notifications tell you when a PR becomes mergeable, goes stale, or has failing checks.
+Merged PRs stay visible for an hour with a purple badge, so you can see what went through. The head branch on your fork is automatically deleted after a confirmed merge.
+
+Desktop notifications fire when a PR becomes mergeable, goes stale, or has failing checks.
 
 The tool keeps its own repo clones under `~/.sidero-rebaser/repos/` and never touches your working directories.
 
@@ -36,14 +39,16 @@ sidero-rebaser
 Or `go run .` from source. All settings have defaults, `--help` for the full list:
 
 ```
---orgs                    comma-separated GitHub orgs (default: siderolabs,cosi-project)
---interval                poll interval (default: 30s, minimum: 10s)
---data-dir                data directory (default: ~/.sidero-rebaser)
---merge-comment           comment to post when merging (default: /m)
---auto-merge-max-retries  max merge comments before giving up (default: 3)
---auto-merge-cooldown     delay between auto-merge attempts (default: 5m)
---notifications           desktop notifications (default: true)
---rebase-countdown        seconds to show success before returning (default: 3)
+--orgs                      comma-separated GitHub orgs (default: siderolabs,cosi-project)
+--interval                  poll interval (default: 2m, minimum: 10s)
+--data-dir                  data directory (default: ~/.sidero-rebaser)
+--merge-comment             comment to post when merging (default: /m)
+--auto-max-retries          max auto attempts before giving up (default: 3)
+--auto-cooldown             cooldown between auto-merge/rerun attempts (default: 5m)
+--notifications             desktop notifications (default: true)
+--rebase-countdown          seconds to show success before returning (default: 3)
+--merged-display-duration   how long to show merged PRs (default: 1h)
+--delete-merged-branches    delete branch on fork after merge (default: true)
 ```
 
 ## Key bindings
@@ -52,7 +57,8 @@ Or `go run .` from source. All settings have defaults, `--help` for the full lis
 |---|---|
 | `r` | Rebase (local git, YubiKey signing) |
 | `m` | Post merge comment (ff merge via bot) |
-| `a` | Toggle auto-merge for selected PR |
+| `a` | Toggle automerge for selected PR |
+| `A` | Toggle autorerun for selected PR |
 | `t` | Re-run failed CI jobs |
 | `Enter` / `o` | Open in browser |
 | `R` | Refresh now |
