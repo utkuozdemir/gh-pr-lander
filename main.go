@@ -18,24 +18,28 @@ func main() {
 	defaultDataDir := filepath.Join(home, ".sidero-rebaser")
 
 	var (
-		orgs                string
-		pollInterval        time.Duration
-		dataDir             string
-		mergeComment        string
-		autoMergeMaxRetries int
-		autoMergeCooldown   time.Duration
-		notifications       bool
-		rebaseCountdown     int
+		orgs                  string
+		pollInterval          time.Duration
+		dataDir               string
+		mergeComment          string
+		autoMaxRetries        int
+		autoCooldown          time.Duration
+		notifications         bool
+		rebaseCountdown       int
+		mergedDisplayDuration time.Duration
+		deleteMergedBranches  bool
 	)
 
 	flag.StringVar(&orgs, "orgs", "siderolabs,cosi-project", "comma-separated GitHub orgs to watch")
-	flag.DurationVar(&pollInterval, "interval", 30*time.Second, "poll interval (minimum 10s)")
+	flag.DurationVar(&pollInterval, "interval", 2*time.Minute, "poll interval (minimum 10s)")
 	flag.StringVar(&dataDir, "data-dir", defaultDataDir, "data directory for repo clones, db, and logs")
 	flag.StringVar(&mergeComment, "merge-comment", "/m", "comment to post when merging")
-	flag.IntVar(&autoMergeMaxRetries, "auto-merge-max-retries", 3, "max merge comments before giving up")
-	flag.DurationVar(&autoMergeCooldown, "auto-merge-cooldown", 5*time.Minute, "cooldown between auto-merge attempts")
+	flag.IntVar(&autoMaxRetries, "auto-max-retries", 3, "max auto attempts before giving up")
+	flag.DurationVar(&autoCooldown, "auto-cooldown", 5*time.Minute, "cooldown between auto-merge/rerun attempts")
 	flag.BoolVar(&notifications, "notifications", true, "enable desktop notifications")
 	flag.IntVar(&rebaseCountdown, "rebase-countdown", 3, "seconds to show success before returning to TUI")
+	flag.DurationVar(&mergedDisplayDuration, "merged-display-duration", 1*time.Hour, "how long to show merged PRs")
+	flag.BoolVar(&deleteMergedBranches, "delete-merged-branches", true, "delete branch on fork after PR is merged")
 	flag.Parse()
 
 	if pollInterval < 10*time.Second {
@@ -43,14 +47,16 @@ func main() {
 	}
 
 	cfg := Config{
-		Orgs:                strings.Split(orgs, ","),
-		PollInterval:        pollInterval,
-		DataDir:             dataDir,
-		MergeComment:        mergeComment,
-		AutoMergeMaxRetries: autoMergeMaxRetries,
-		AutoMergeCooldown:   autoMergeCooldown,
-		Notifications:       notifications,
-		RebaseCountdown:     rebaseCountdown,
+		Orgs:                  strings.Split(orgs, ","),
+		PollInterval:          pollInterval,
+		DataDir:               dataDir,
+		MergeComment:          mergeComment,
+		AutoMaxRetries:        autoMaxRetries,
+		AutoCooldown:          autoCooldown,
+		Notifications:         notifications,
+		RebaseCountdown:       rebaseCountdown,
+		MergedDisplayDuration: mergedDisplayDuration,
+		DeleteMergedBranches:  deleteMergedBranches,
 	}
 
 	logFile, err := setupLogging(cfg.DataDir)

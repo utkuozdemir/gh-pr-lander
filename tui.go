@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,26 +40,48 @@ type rebaseFinishedMsg struct {
 
 type clearStatusMsg struct{}
 
+type delayedRefreshMsg struct{}
+
+type branchDeletedMsg struct {
+	prKey  string
+	branch string
+	err    error
+}
+
 // Model
 
+type mergedPR struct {
+	PR     PR
+	GoneAt time.Time
+}
+
+type displayItem struct {
+	pr     PR
+	merged bool
+	goneAt time.Time
+}
+
 type model struct {
-	config      Config
-	client      *GitHubClient
-	prs         []PR
-	prevPRs     []PR // previous state for transition detection
-	cursor      int
-	width       int
-	height      int
-	loading     bool
-	err         error
-	lastFetch   time.Time
-	status      string // temporary status message
-	spinner     spinner.Model
-	lastRerun   map[string]time.Time // PR key -> last re-run time
-	autoMerge   map[string]bool      // PR key -> auto-merge enabled
-	mergeFailed map[string]bool      // PR key -> 3+ /m with no merge
-	lastAutoM   map[string]time.Time // PR key -> last auto /m attempt
-	quitting    bool
+	config         Config
+	client         *GitHubClient
+	prs            []PR
+	prevPRs        []PR
+	cursor         int
+	width          int
+	height         int
+	loading        bool
+	err            error
+	lastFetch      time.Time
+	status         string
+	spinner        spinner.Model
+	lastRerun      map[string]time.Time // manual rerun cooldown
+	autoMerge      map[string]bool      // enabled flag, persisted in db.yaml
+	autoRerun      map[string]bool      // enabled flag, persisted in db.yaml
+	mergeFailed    map[string]bool      // discovered from API, in-memory
+	rerunFailed    map[string]bool      // discovered from API, in-memory
+	lastAutoCheck  map[string]time.Time // cooldown gate to avoid API spam
+	recentlyMerged map[string]*mergedPR // PRs that disappeared (merged/closed)
+	quitting       bool
 }
 
 func newModel(cfg Config, client *GitHubClient) model {
@@ -66,16 +89,55 @@ func newModel(cfg Config, client *GitHubClient) model {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(colorCyan)
 
+	am, ar := loadDB(cfg.DataDir)
+
 	return model{
-		config:      cfg,
-		client:      client,
-		loading:     true,
-		spinner:     s,
-		lastRerun:   make(map[string]time.Time),
-		autoMerge:   loadAutoMerge(cfg.DataDir),
-		mergeFailed: make(map[string]bool),
-		lastAutoM:   make(map[string]time.Time),
+		config:         cfg,
+		client:         client,
+		loading:        true,
+		spinner:        s,
+		lastRerun:      make(map[string]time.Time),
+		autoMerge:      am,
+		autoRerun:      ar,
+		mergeFailed:    make(map[string]bool),
+		rerunFailed:    make(map[string]bool),
+		lastAutoCheck:  make(map[string]time.Time),
+		recentlyMerged: make(map[string]*mergedPR),
 	}
+}
+
+// displayItems returns active PRs followed by recently merged PRs as one list.
+func (m model) displayItems() []displayItem {
+	var items []displayItem
+	for _, pr := range m.prs {
+		items = append(items, displayItem{pr: pr})
+	}
+	for _, mp := range m.sortedMerged() {
+		items = append(items, displayItem{pr: mp.PR, merged: true, goneAt: mp.GoneAt})
+	}
+	return items
+}
+
+func (m model) sortedMerged() []*mergedPR {
+	now := time.Now()
+	var result []*mergedPR
+	for _, mp := range m.recentlyMerged {
+		if now.Sub(mp.GoneAt) < m.config.MergedDisplayDuration {
+			result = append(result, mp)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].GoneAt.After(result[j].GoneAt)
+	})
+	return result
+}
+
+func (m model) selectedItem() (displayItem, bool) {
+	items := m.displayItems()
+	if m.cursor >= 0 && m.cursor < len(items) {
+		return items[m.cursor], true
+	}
+	return displayItem{}, false
 }
 
 func (m model) Init() tea.Cmd {
@@ -105,6 +167,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			tickCmd(m.config.PollInterval),
 		)
 
+	case delayedRefreshMsg:
+		return m, fetchPRsCmd(m.client, m.config.Orgs)
+
 	case prsLoadedMsg:
 		m.loading = false
 		if msg.err != nil {
@@ -117,19 +182,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.prs = msg.prs
 		m.lastFetch = time.Now()
 
-		// Clamp cursor
-		if m.cursor >= len(m.prs) {
-			m.cursor = max(0, len(m.prs)-1)
+		m.checkTransitions()
+		deleteCmds := m.detectMerged()
+		m.cleanupAuto()
+
+		// Clamp cursor to combined list
+		items := m.displayItems()
+		if m.cursor >= len(items) {
+			m.cursor = max(0, len(items)-1)
 		}
 
-		// Check for state transitions and notify
-		m.checkTransitions()
-
-		// Clean up auto entries for PRs no longer open
-		m.cleanupAutoMerge()
-
-		// Trigger auto-merge for ready PRs
-		if cmds := m.autoMergeCmds(); len(cmds) > 0 {
+		cmds := m.autoCmds()
+		cmds = append(cmds, deleteCmds...)
+		if len(cmds) > 0 {
 			return m, tea.Batch(cmds...)
 		}
 
@@ -137,18 +202,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case commentPostedMsg:
 		if msg.err != nil {
-			slog.Error("failed to post /m", "pr", msg.pr.RepoShort(), "error", msg.err)
-			m.status = errorStyle.Render("✗ Failed to post /m: " + msg.err.Error())
+			slog.Error("failed to post merge comment", "pr", msg.pr.RepoShort(), "error", msg.err)
+			m.status = errorStyle.Render("✗ Failed to post " + m.config.MergeComment + ": " + msg.err.Error())
 		} else if msg.duplicate {
-			slog.Info("skipped duplicate /m", "pr", msg.pr.RepoShort())
-			m.status = indicatorWarn.Render("⚠ /m already posted less than a minute ago")
+			slog.Info("skipped duplicate merge comment", "pr", msg.pr.RepoShort())
+			m.status = indicatorWarn.Render("⚠ " + m.config.MergeComment + " already posted less than a minute ago")
 		} else {
-			slog.Info("posted /m", "pr", msg.pr.RepoShort())
-			m.status = successStyle.Render(fmt.Sprintf("✓ Posted /m on %s", msg.pr.RepoShort()))
+			slog.Info("posted merge comment", "pr", msg.pr.RepoShort())
+			m.status = successStyle.Render(fmt.Sprintf("✓ Posted %s on %s", m.config.MergeComment, msg.pr.RepoShort()))
 		}
 		return m, tea.Batch(
 			clearStatusCmd(),
 			fetchPRsCmd(m.client, m.config.Orgs),
+			delayedRefreshCmd(15*time.Second),
+			delayedRefreshCmd(30*time.Second),
 		)
 
 	case checksRerunMsg:
@@ -159,10 +226,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Info("re-running failed checks", "pr", msg.pr.RepoShort())
 			m.status = successStyle.Render(fmt.Sprintf("✓ Re-running failed jobs on %s", msg.pr.RepoShort()))
 		}
-		return m, tea.Batch(
-			clearStatusCmd(),
-			fetchPRsCmd(m.client, m.config.Orgs),
-		)
+		return m, tea.Batch(clearStatusCmd(), fetchPRsCmd(m.client, m.config.Orgs))
 
 	case rebaseFinishedMsg:
 		if msg.err != nil {
@@ -172,26 +236,48 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Info("rebase completed successfully")
 			m.status = successStyle.Render("✓ Rebase complete!")
 		}
-		return m, tea.Batch(
-			clearStatusCmd(),
-			fetchPRsCmd(m.client, m.config.Orgs),
-		)
+		return m, tea.Batch(clearStatusCmd(), fetchPRsCmd(m.client, m.config.Orgs))
 
 	case autoMergeResultMsg:
-		if msg.mergeFailed {
-			slog.Error("auto-merge gave up", "pr", msg.prKey, "reason", "3+ /m comments with no merge")
+		if msg.failed {
+			slog.Error("automerge gave up", "pr", msg.prKey)
 			m.mergeFailed[msg.prKey] = true
-			m.status = errorStyle.Render(fmt.Sprintf("⚡ %s: /m posted 3 times but PR still open — giving up", msg.prKey))
-			sendNotification("Auto-merge failed", msg.prKey+" — /m posted 3 times, PR still open")
+			m.status = errorStyle.Render(fmt.Sprintf("⚡ %s: %s posted %d times, PR still open — giving up", msg.prKey, m.config.MergeComment, m.config.AutoMaxRetries))
+			sendNotification("Automerge failed", msg.prKey+" — giving up")
 		} else if msg.posted {
-			slog.Info("auto-merge posted /m", "pr", msg.prKey)
-			m.lastAutoM[msg.prKey] = time.Now()
-			m.status = successStyle.Render(fmt.Sprintf("⚡ Auto-posted /m on %s", msg.prKey))
+			slog.Info("automerge posted merge comment", "pr", msg.prKey)
+			m.status = successStyle.Render(fmt.Sprintf("⚡ Automerge: posted %s on %s", m.config.MergeComment, msg.prKey))
+			return m, tea.Batch(
+				clearStatusCmd(),
+				delayedRefreshCmd(15*time.Second),
+				delayedRefreshCmd(30*time.Second),
+			)
 		} else if msg.err != nil {
-			slog.Error("auto-merge error", "pr", msg.prKey, "error", msg.err)
+			slog.Error("automerge error", "pr", msg.prKey, "error", msg.err)
 		}
-		// tooSoon: silently skip, will retry next cycle
 		return m, clearStatusCmd()
+
+	case autoRerunResultMsg:
+		if msg.failed {
+			slog.Error("autorerun gave up", "pr", msg.prKey)
+			m.rerunFailed[msg.prKey] = true
+			m.status = errorStyle.Render(fmt.Sprintf("⚡ %s: re-ran %d times, still failing — giving up", msg.prKey, m.config.AutoMaxRetries))
+			sendNotification("Autorerun failed", msg.prKey+" — giving up")
+		} else if msg.reran {
+			slog.Info("autorerun triggered", "pr", msg.prKey)
+			m.status = successStyle.Render(fmt.Sprintf("⚡ Autorerun: re-running failed jobs on %s", msg.prKey))
+		} else if msg.err != nil {
+			slog.Error("autorerun error", "pr", msg.prKey, "error", msg.err)
+		}
+		return m, clearStatusCmd()
+
+	case branchDeletedMsg:
+		if msg.err != nil {
+			slog.Error("failed to delete branch", "pr", msg.prKey, "branch", msg.branch, "error", msg.err)
+		} else {
+			slog.Info("deleted merged branch", "pr", msg.prKey, "branch", msg.branch)
+		}
+		return m, nil
 
 	case clearStatusMsg:
 		m.status = ""
@@ -204,14 +290,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// Key handling
+
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	items := m.displayItems()
+
 	switch msg.String() {
 	case "q", "ctrl+c":
 		m.quitting = true
 		return m, tea.Quit
 
 	case "j", "down":
-		if m.cursor < len(m.prs)-1 {
+		if m.cursor < len(items)-1 {
 			m.cursor++
 		}
 		return m, nil
@@ -227,24 +317,21 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "G", "end":
-		m.cursor = max(0, len(m.prs)-1)
+		m.cursor = max(0, len(items)-1)
 		return m, nil
 
 	case "m":
 		return m.doMerge()
-
 	case "r":
 		return m.doRebase()
-
 	case "t":
 		return m.doRerunChecks()
-
 	case "a":
-		return m.toggleAutoMerge()
-
+		return m.toggleAuto(m.autoMerge, m.mergeFailed, "automerge")
+	case "A":
+		return m.toggleAuto(m.autoRerun, m.rerunFailed, "autorerun")
 	case "o", "enter":
 		return m.openInBrowser()
-
 	case "R", "ctrl+r":
 		m.loading = true
 		m.status = ""
@@ -254,122 +341,172 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// Actions — all check for merged PRs and bail if so (except open)
+
 func (m model) doMerge() (tea.Model, tea.Cmd) {
-	if len(m.prs) == 0 {
+	item, ok := m.selectedItem()
+	if !ok || item.merged {
 		return m, nil
 	}
-	pr := m.prs[m.cursor]
 
-	if pr.OverallStatus != StatusReady {
+	if item.pr.OverallStatus != StatusReady {
 		m.status = errorStyle.Render("✗ PR not ready to merge — need synced base + passing CI")
 		return m, clearStatusCmd()
 	}
 
-	m.status = fmt.Sprintf("Posting %s on %s...", m.config.MergeComment, pr.RepoShort())
-	return m, postCommentCmd(m.client, pr, m.config.MergeComment)
+	m.status = fmt.Sprintf("Posting %s on %s...", m.config.MergeComment, item.pr.RepoShort())
+	return m, postCommentCmd(m.client, item.pr, m.config.MergeComment)
 }
 
 func (m model) doRebase() (tea.Model, tea.Cmd) {
-	if len(m.prs) == 0 {
+	item, ok := m.selectedItem()
+	if !ok || item.merged {
 		return m, nil
 	}
-	pr := m.prs[m.cursor]
 
-	if pr.BaseStatus == BaseConflict {
+	if item.pr.BaseStatus == BaseConflict {
 		m.status = errorStyle.Render("✗ PR has conflicts — resolve manually")
 		return m, clearStatusCmd()
 	}
 
-	script, err := buildRebaseScript(m.config.DataDir, pr, m.config.RebaseCountdown)
+	script, err := buildRebaseScript(m.config.DataDir, item.pr, m.config.RebaseCountdown)
 	if err != nil {
 		m.status = errorStyle.Render("✗ " + err.Error())
 		return m, clearStatusCmd()
 	}
 
 	cmd := exec.Command("bash", "-c", script)
-
 	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return rebaseFinishedMsg{err: err}
 	})
 }
 
 func (m model) doRerunChecks() (tea.Model, tea.Cmd) {
-	if len(m.prs) == 0 {
+	item, ok := m.selectedItem()
+	if !ok || item.merged {
 		return m, nil
 	}
-	pr := m.prs[m.cursor]
 
-	if pr.CIStatus != CIFailed {
+	if item.pr.CIStatus != CIFailed {
 		m.status = errorStyle.Render("✗ No failed checks to re-run")
 		return m, clearStatusCmd()
 	}
 
-	if last, ok := m.lastRerun[pr.RepoShort()]; ok && time.Since(last) < time.Minute {
+	key := item.pr.RepoShort()
+	if last, ok := m.lastRerun[key]; ok && time.Since(last) < time.Minute {
 		m.status = indicatorWarn.Render("⚠ Already re-ran checks less than a minute ago")
 		return m, clearStatusCmd()
 	}
 
-	m.lastRerun[pr.RepoShort()] = time.Now()
-	m.status = fmt.Sprintf("Re-running failed jobs on %s...", pr.RepoShort())
-	return m, rerunChecksCmd(m.client, pr)
+	m.lastRerun[key] = time.Now()
+	m.status = fmt.Sprintf("Re-running failed jobs on %s...", key)
+	return m, rerunChecksCmd(m.client, item.pr)
 }
 
 func (m model) openInBrowser() (tea.Model, tea.Cmd) {
-	if len(m.prs) == 0 {
+	item, ok := m.selectedItem()
+	if !ok {
 		return m, nil
 	}
-	pr := m.prs[m.cursor]
-	_ = exec.Command("open", pr.URL).Start()
+	// Works on both active and merged PRs
+	_ = exec.Command("open", item.pr.URL).Start()
 	return m, nil
 }
 
-func (m model) toggleAutoMerge() (tea.Model, tea.Cmd) {
-	if len(m.prs) == 0 {
+func (m model) toggleAuto(entries map[string]bool, failedMap map[string]bool, label string) (tea.Model, tea.Cmd) {
+	item, ok := m.selectedItem()
+	if !ok || item.merged {
 		return m, nil
 	}
-	pr := m.prs[m.cursor]
-	key := pr.RepoShort()
+	key := item.pr.RepoShort()
 
-	if m.autoMerge[key] {
-		delete(m.autoMerge, key)
-		delete(m.mergeFailed, key)
-		delete(m.lastAutoM, key)
-		slog.Info("auto-merge disabled", "pr", key)
-		m.status = indicatorAuto.Render("⚡ Auto-merge disabled for " + key)
+	if entries[key] {
+		delete(entries, key)
+		delete(failedMap, key)
+		delete(m.lastAutoCheck, key)
+		slog.Info(label+" disabled", "pr", key)
+		m.status = indicatorAuto.Render("⚡ " + label + " disabled for " + key)
 	} else {
-		m.autoMerge[key] = true
-		slog.Info("auto-merge enabled", "pr", key)
-		m.status = indicatorAuto.Render("⚡ Auto-merge enabled for " + key)
+		entries[key] = true
+		slog.Info(label+" enabled", "pr", key)
+		m.status = indicatorAuto.Render("⚡ " + label + " enabled for " + key)
 	}
 
-	_ = saveAutoMerge(m.config.DataDir, m.autoMerge)
+	saveDB(m.config.DataDir, m.autoMerge, m.autoRerun)
 	return m, clearStatusCmd()
 }
 
-// autoMergeCmds returns commands for any auto-merge PRs that are ready.
-func (m model) autoMergeCmds() []tea.Cmd {
+// Auto logic
+
+func (m model) isMergeFailed(key string) bool {
+	return m.autoMerge[key] && m.mergeFailed[key]
+}
+
+func (m model) isRerunFailed(key string) bool {
+	return m.autoRerun[key] && m.rerunFailed[key]
+}
+
+func (m model) autoCmds() []tea.Cmd {
 	var cmds []tea.Cmd
 
 	for _, pr := range m.prs {
 		key := pr.RepoShort()
-		if !m.autoMerge[key] || m.mergeFailed[key] {
-			continue
+
+		if m.autoMerge[key] && !m.mergeFailed[key] && pr.OverallStatus == StatusReady {
+			checkKey := "merge:" + key
+			if time.Since(m.lastAutoCheck[checkKey]) >= m.config.AutoCooldown {
+				m.lastAutoCheck[checkKey] = time.Now()
+				cmds = append(cmds, autoMergeCmd(m.client, pr, m.config))
+			}
 		}
-		if pr.OverallStatus != StatusReady {
-			continue
+
+		if m.autoRerun[key] && !m.rerunFailed[key] && pr.CIStatus == CIFailed {
+			checkKey := "rerun:" + key
+			if time.Since(m.lastAutoCheck[checkKey]) >= m.config.AutoCooldown {
+				m.lastAutoCheck[checkKey] = time.Now()
+				cmds = append(cmds, autoRerunCmd(m.client, pr, m.config.AutoMaxRetries))
+			}
 		}
-		// Local cooldown — avoid API calls during the cooldown window
-		if last, ok := m.lastAutoM[key]; ok && time.Since(last) < m.config.AutoMergeCooldown {
-			continue
-		}
-		cmds = append(cmds, autoMergeCmd(m.client, pr, m.config))
 	}
 
 	return cmds
 }
 
-// cleanupAutoMerge removes auto entries for PRs no longer in the open list.
-func (m model) cleanupAutoMerge() {
+// Merged PR tracking
+
+func (m model) detectMerged() []tea.Cmd {
+	if len(m.prevPRs) == 0 {
+		return nil
+	}
+
+	currentKeys := make(map[string]bool, len(m.prs))
+	for _, pr := range m.prs {
+		currentKeys[pr.RepoShort()] = true
+	}
+
+	var cmds []tea.Cmd
+	for _, pr := range m.prevPRs {
+		key := pr.RepoShort()
+		if !currentKeys[key] && m.recentlyMerged[key] == nil {
+			slog.Info("PR disappeared (merged/closed)", "pr", key)
+			m.recentlyMerged[key] = &mergedPR{PR: pr, GoneAt: time.Now()}
+
+			if m.config.DeleteMergedBranches && pr.HeadRepo != "" && pr.HeadBranch != "" {
+				cmds = append(cmds, deleteMergedBranchCmd(m.client, pr))
+			}
+		}
+	}
+
+	for key, mp := range m.recentlyMerged {
+		if time.Since(mp.GoneAt) >= m.config.MergedDisplayDuration {
+			delete(m.recentlyMerged, key)
+		}
+	}
+
+	return cmds
+}
+
+func (m model) cleanupAuto() {
 	openPRs := make(map[string]bool, len(m.prs))
 	for _, pr := range m.prs {
 		openPRs[pr.RepoShort()] = true
@@ -379,14 +516,18 @@ func (m model) cleanupAutoMerge() {
 	for key := range m.autoMerge {
 		if !openPRs[key] {
 			delete(m.autoMerge, key)
-			delete(m.mergeFailed, key)
-			delete(m.lastAutoM, key)
+			changed = true
+		}
+	}
+	for key := range m.autoRerun {
+		if !openPRs[key] {
+			delete(m.autoRerun, key)
 			changed = true
 		}
 	}
 
 	if changed {
-		_ = saveAutoMerge(m.config.DataDir, m.autoMerge)
+		saveDB(m.config.DataDir, m.autoMerge, m.autoRerun)
 	}
 }
 
@@ -406,31 +547,19 @@ func (m model) checkTransitions() {
 			continue
 		}
 
-		// Notify: became ready to merge
 		if prev.OverallStatus != StatusReady && pr.OverallStatus == StatusReady {
 			slog.Info("PR became ready to merge", "pr", pr.RepoShort())
-			sendNotification(
-				"Ready to merge",
-				fmt.Sprintf("%s — %s", pr.RepoShort(), pr.Title),
-			)
+			sendNotification("Ready to merge", fmt.Sprintf("%s — %s", pr.RepoShort(), pr.Title))
 		}
 
-		// Notify: checks failed
 		if prev.CIStatus != CIFailed && pr.CIStatus == CIFailed {
 			slog.Info("checks failed", "pr", pr.RepoShort())
-			sendNotification(
-				"Checks failed",
-				fmt.Sprintf("%s — %s", pr.RepoShort(), pr.Title),
-			)
+			sendNotification("Checks failed", fmt.Sprintf("%s — %s", pr.RepoShort(), pr.Title))
 		}
 
-		// Notify: became stale (someone merged ahead of us)
 		if prev.BaseStatus == BaseSynced && pr.BaseStatus == BaseBehind {
 			slog.Info("PR became stale", "pr", pr.RepoShort())
-			sendNotification(
-				"PR needs rebase",
-				fmt.Sprintf("%s — %s", pr.RepoShort(), pr.Title),
-			)
+			sendNotification("PR needs rebase", fmt.Sprintf("%s — %s", pr.RepoShort(), pr.Title))
 		}
 	}
 }
@@ -444,38 +573,35 @@ func (m model) View() string {
 
 	var b strings.Builder
 
-	// Header
 	b.WriteString(m.renderHeader())
 	b.WriteString("\n\n")
 
-	// PRs or loading/error/empty state
-	if m.loading && len(m.prs) == 0 {
+	items := m.displayItems()
+
+	if m.loading && len(items) == 0 {
 		b.WriteString("  " + m.spinner.View() + " Loading PRs...")
 		b.WriteString("\n")
-	} else if m.err != nil && len(m.prs) == 0 {
+	} else if m.err != nil && len(items) == 0 {
 		b.WriteString(errorStyle.Render("  Error: " + m.err.Error()))
 		b.WriteString("\n")
-	} else if len(m.prs) == 0 {
+	} else if len(items) == 0 {
 		b.WriteString("  No open PRs found.\n")
 	} else {
-		b.WriteString(m.renderPRList())
+		b.WriteString(m.renderItemList(items))
 	}
 
-	// Status message
 	if m.status != "" {
 		b.WriteString("\n")
 		b.WriteString("  " + m.status)
 		b.WriteString("\n")
 	}
 
-	// Error from last fetch (shown even when we have PRs)
 	if m.err != nil && len(m.prs) > 0 {
 		b.WriteString("\n")
 		b.WriteString(errorStyle.Render("  Fetch error: " + m.err.Error()))
 		b.WriteString("\n")
 	}
 
-	// Footer
 	b.WriteString("\n")
 	b.WriteString(m.renderFooter())
 
@@ -499,81 +625,67 @@ func (m model) renderHeader() string {
 	}
 
 	right := headerInfoStyle.Render(info + prCount)
-
 	gap := max(m.width-lipgloss.Width(title)-lipgloss.Width(right)-2, 1)
 
 	return title + strings.Repeat(" ", gap) + right
 }
 
-func (m model) renderPRList() string {
+func (m model) renderItemList(items []displayItem) string {
 	var b strings.Builder
 
-	linesPerPR := 4 // repo line + title line + status line + blank line
-	availableHeight := max(
-		// header + footer + margins
-		m.height-8, linesPerPR)
-
+	linesPerPR := 4
+	availableHeight := max(m.height-8, linesPerPR)
 	maxVisible := max(availableHeight/linesPerPR, 1)
 
-	// Compute scroll offset
 	scrollOffset := 0
 	if m.cursor >= maxVisible {
 		scrollOffset = m.cursor - maxVisible + 1
 	}
 
-	end := min(scrollOffset+maxVisible, len(m.prs))
+	end := min(scrollOffset+maxVisible, len(items))
 
 	for i := scrollOffset; i < end; i++ {
-		pr := m.prs[i]
 		selected := i == m.cursor
-
-		b.WriteString(m.renderPR(pr, selected))
-
+		b.WriteString(m.renderItem(items[i], selected))
 		if i < end-1 {
 			b.WriteString("\n")
 		}
 	}
 
-	if len(m.prs) > maxVisible {
-		fmt.Fprintf(&b, "\n  %s",
-			prDescStyle.Render(fmt.Sprintf("(%d/%d shown — scroll with j/k)", min(maxVisible, len(m.prs)), len(m.prs))))
-		b.WriteString("\n")
+	if len(items) > maxVisible {
+		fmt.Fprintf(&b, "\n  %s\n",
+			prDescStyle.Render(fmt.Sprintf("(%d/%d shown — scroll with j/k)", min(maxVisible, len(items)), len(items))))
 	}
 
 	return b.String()
 }
 
-func (m model) renderPR(pr PR, selected bool) string {
-	maxTitleWidth := max(m.width-30, 20)
+func (m model) renderItem(item displayItem, selected bool) string {
+	if item.merged {
+		return m.renderMergedItem(item, selected)
+	}
+	return m.renderActivePR(item.pr, selected)
+}
 
+func (m model) renderActivePR(pr PR, selected bool) string {
+	maxTitleWidth := max(m.width-30, 20)
 	key := pr.RepoShort()
 
-	// Line 1: repo#number + badge
 	repoRef := prRepoStyle.Render(key)
-	badge := statusBadge(pr.OverallStatus)
-	if m.mergeFailed[key] {
-		badge = badgeMergeFailed.Render("MERGE FAIL")
-	}
+	badge := m.badgeFor(key, pr.OverallStatus)
 	gap := max(m.width-lipgloss.Width(repoRef)-lipgloss.Width(badge)-6, 1)
 	line1 := repoRef + strings.Repeat(" ", gap) + badge
 
-	// Line 2: title
 	title := pr.Title
 	if len(title) > maxTitleWidth {
 		title = title[:maxTitleWidth-1] + "…"
 	}
 	line2 := prTitleStyle.Render(title)
 
-	// Line 3: status indicators
 	base := "Base " + baseIndicator(pr.BaseStatus)
 	ci := "CI " + ciIndicator(pr.CIStatus, pr.Checks)
 	review := "Review " + reviewIndicator(pr.ReviewStatus)
-	auto := ""
-	if m.mergeFailed[key] {
-		auto = "  " + badgeMergeFailed.Render("⚡ gave up")
-	} else if m.autoMerge[key] {
-		auto = "  " + indicatorAuto.Render("⚡ auto")
-	}
+	auto := m.autoIndicators(key)
 	line3 := prDescStyle.Render(base + "  " + ci + "  " + review + auto)
 
 	content := line1 + "\n" + line2 + "\n" + line3 + "\n"
@@ -584,12 +696,69 @@ func (m model) renderPR(pr PR, selected bool) string {
 	return normalStyle.Render(content)
 }
 
+func (m model) renderMergedItem(item displayItem, selected bool) string {
+	maxTitleWidth := max(m.width-30, 20)
+
+	repoRef := prRepoStyle.Render(item.pr.RepoShort())
+	badge := badgeMerged.Render("MERGED")
+	gap := max(m.width-lipgloss.Width(repoRef)-lipgloss.Width(badge)-6, 1)
+	line1 := repoRef + strings.Repeat(" ", gap) + badge
+
+	title := item.pr.Title
+	if len(title) > maxTitleWidth {
+		title = title[:maxTitleWidth-1] + "…"
+	}
+	line2 := prTitleStyle.Render(title)
+
+	ago := time.Since(item.goneAt).Truncate(time.Second)
+	line3 := prDescStyle.Render(fmt.Sprintf("Merged %s ago", ago))
+
+	content := line1 + "\n" + line2 + "\n" + line3 + "\n"
+
+	if selected {
+		return selectedStyle.Render(content)
+	}
+	return normalStyle.Render(content)
+}
+
+func (m model) badgeFor(key string, status OverallStatus) string {
+	if m.isMergeFailed(key) {
+		return badgeMergeFailed.Render("MERGE FAIL")
+	}
+	if m.isRerunFailed(key) {
+		return badgeRerunFailed.Render("RERUN FAIL")
+	}
+	return statusBadge(status)
+}
+
+func (m model) autoIndicators(key string) string {
+	var parts []string
+
+	if m.isMergeFailed(key) {
+		parts = append(parts, badgeMergeFailed.Render("⚡ merge gave up"))
+	} else if m.autoMerge[key] {
+		parts = append(parts, indicatorAuto.Render("⚡ automerge"))
+	}
+
+	if m.isRerunFailed(key) {
+		parts = append(parts, badgeRerunFailed.Render("⚡ rerun gave up"))
+	} else if m.autoRerun[key] {
+		parts = append(parts, indicatorAuto.Render("⚡ autorerun"))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+	return "  " + strings.Join(parts, " ")
+}
+
 func (m model) renderFooter() string {
 	keys := []struct{ key, desc string }{
 		{"m", "merge"},
 		{"r", "rebase"},
 		{"t", "re-run"},
-		{"a", "auto"},
+		{"a", "automerge"},
+		{"A", "autorerun"},
 		{"o", "open"},
 		{"R", "refresh"},
 		{"q", "quit"},
@@ -608,6 +777,12 @@ func (m model) renderFooter() string {
 func tickCmd(interval time.Duration) tea.Cmd {
 	return tea.Tick(interval, func(_ time.Time) tea.Msg {
 		return tickMsg{}
+	})
+}
+
+func delayedRefreshCmd(delay time.Duration) tea.Cmd {
+	return tea.Tick(delay, func(_ time.Time) tea.Msg {
+		return delayedRefreshMsg{}
 	})
 }
 
@@ -645,4 +820,27 @@ func clearStatusCmd() tea.Cmd {
 	return tea.Tick(5*time.Second, func(_ time.Time) tea.Msg {
 		return clearStatusMsg{}
 	})
+}
+
+// deleteMergedBranchCmd verifies a PR is truly merged, then deletes its head branch.
+func deleteMergedBranchCmd(client *GitHubClient, pr PR) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		key := pr.RepoShort()
+
+		merged, err := client.isPRMerged(ctx, pr.Repo, pr.Number)
+		if err != nil {
+			return branchDeletedMsg{prKey: key, branch: pr.HeadBranch, err: fmt.Errorf("check merged: %w", err)}
+		}
+
+		if !merged {
+			slog.Info("PR closed but not merged, skipping branch delete", "pr", key)
+			return branchDeletedMsg{prKey: key, branch: pr.HeadBranch, err: nil}
+		}
+
+		err = client.deleteBranch(ctx, pr.HeadRepo, pr.HeadBranch)
+		return branchDeletedMsg{prKey: key, branch: pr.HeadBranch, err: err}
+	}
 }

@@ -359,7 +359,7 @@ func (c *GitHubClient) postComment(ctx context.Context, repoFullName string, prN
 	return false, c.postCommentRaw(ctx, repoFullName, prNumber, body)
 }
 
-// countMergeComments counts "/m" comments from the authenticated user on a PR.
+// countMergeComments counts comments with the given body from the authenticated user.
 // Returns the total count and the time of the most recent one.
 func (c *GitHubClient) countMergeComments(ctx context.Context, repoFullName string, prNumber int, commentBody string) (count int, lastTime time.Time, err error) {
 	username, err := c.getUsername(ctx)
@@ -403,6 +403,43 @@ func (c *GitHubClient) countMergeComments(ctx context.Context, repoFullName stri
 	}
 
 	return count, lastTime, nil
+}
+
+// maxFailedRunAttempt returns the highest run_attempt among failed workflow runs for a SHA.
+// Returns 0 if there are no failed runs.
+func (c *GitHubClient) maxFailedRunAttempt(ctx context.Context, repoFullName string, headSHA string) (int, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/actions/runs?head_sha=%s", repoFullName, headSHA)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("list runs: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var runs struct {
+		WorkflowRuns []struct {
+			RunAttempt int    `json:"run_attempt"`
+			Conclusion string `json:"conclusion"`
+		} `json:"workflow_runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
+		return 0, fmt.Errorf("decode runs: %w", err)
+	}
+
+	maxAttempt := 0
+	for _, run := range runs.WorkflowRuns {
+		if (run.Conclusion == "failure" || run.Conclusion == "timed_out" || run.Conclusion == "cancelled") && run.RunAttempt > maxAttempt {
+			maxAttempt = run.RunAttempt
+		}
+	}
+
+	return maxAttempt, nil
 }
 
 func (c *GitHubClient) rerunFailedJobs(ctx context.Context, repoFullName string, headSHA string) error {
@@ -461,6 +498,56 @@ func (c *GitHubClient) rerunFailedJobs(ctx context.Context, repoFullName string,
 
 	if reran == 0 {
 		return fmt.Errorf("no failed workflow runs found to re-run")
+	}
+
+	return nil
+}
+
+// isPRMerged checks whether a PR has been merged (not just closed).
+func (c *GitHubClient) isPRMerged(ctx context.Context, repoFullName string, prNumber int) (bool, error) {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/pulls/%d", repoFullName, prNumber)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("get PR: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var pr struct {
+		Merged bool `json:"merged"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+		return false, fmt.Errorf("decode PR: %w", err)
+	}
+
+	return pr.Merged, nil
+}
+
+// deleteBranch deletes a branch from a repo. Used to clean up after merge.
+func (c *GitHubClient) deleteBranch(ctx context.Context, repoFullName string, branch string) error {
+	url := fmt.Sprintf("https://api.github.com/repos/%s/git/refs/heads/%s", repoFullName, branch)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("delete branch: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete branch HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
 	return nil

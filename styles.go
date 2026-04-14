@@ -9,6 +9,7 @@ var (
 	colorRed     = lipgloss.Color("#ef4444")
 	colorCyan    = lipgloss.Color("#06b6d4")
 	colorMagenta = lipgloss.Color("#a855f7")
+	colorPurple  = lipgloss.Color("#8b5cf6")
 	colorOrange  = lipgloss.Color("#f97316")
 	colorGray    = lipgloss.Color("#6b7280")
 	colorDim     = lipgloss.Color("#4b5563")
@@ -70,6 +71,14 @@ var (
 	badgeMergeFailed = lipgloss.NewStyle().
 				Bold(true).
 				Foreground(colorOrange)
+
+	badgeRerunFailed = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(colorOrange)
+
+	badgeMerged = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorPurple)
 
 	// Indicators
 	indicatorPass    = lipgloss.NewStyle().Foreground(colorGreen)

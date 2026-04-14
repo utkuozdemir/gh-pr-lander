@@ -11,65 +11,82 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// db.yaml structure — general-purpose persistence.
-type db struct {
-	AutoMerge []string `yaml:"auto_merge"`
+// db.yaml — just tracks which PRs have auto features enabled.
+// All retry counts come from the GitHub API (comments for merge, run_attempt for reruns).
+type dbData struct {
+	AutoMerge []string `yaml:"auto_merge,omitempty"`
+	AutoRerun []string `yaml:"auto_rerun,omitempty"`
 }
 
 func dbPath(dataDir string) string {
 	return filepath.Join(dataDir, "db.yaml")
 }
 
-func loadAutoMerge(dataDir string) map[string]bool {
-	result := make(map[string]bool)
+func loadDB(dataDir string) (autoMerge, autoRerun map[string]bool) {
+	autoMerge = make(map[string]bool)
+	autoRerun = make(map[string]bool)
 
 	data, err := os.ReadFile(dbPath(dataDir))
 	if err != nil {
-		return result
+		return
 	}
 
-	var d db
+	var d dbData
 	if err := yaml.Unmarshal(data, &d); err != nil {
-		return result
+		return
 	}
 
 	for _, key := range d.AutoMerge {
-		result[key] = true
+		autoMerge[key] = true
+	}
+	for _, key := range d.AutoRerun {
+		autoRerun[key] = true
 	}
 
-	return result
+	return
 }
 
-func saveAutoMerge(dataDir string, auto map[string]bool) error {
-	keys := make([]string, 0, len(auto))
-	for key, enabled := range auto {
-		if enabled {
-			keys = append(keys, key)
-		}
+func saveDB(dataDir string, autoMerge, autoRerun map[string]bool) {
+	var d dbData
+
+	for key := range autoMerge {
+		d.AutoMerge = append(d.AutoMerge, key)
 	}
+	sort.Strings(d.AutoMerge)
 
-	sort.Strings(keys)
-
-	d := db{AutoMerge: keys}
+	for key := range autoRerun {
+		d.AutoRerun = append(d.AutoRerun, key)
+	}
+	sort.Strings(d.AutoRerun)
 
 	data, err := yaml.Marshal(d)
 	if err != nil {
-		return err
+		return
 	}
 
-	return os.WriteFile(dbPath(dataDir), data, 0o644)
+	_ = os.WriteFile(dbPath(dataDir), data, 0o644)
 }
 
-// autoMergeResultMsg is returned by autoMergeCmd.
+// Messages
+
 type autoMergeResultMsg struct {
-	prKey       string
-	posted      bool // /m was posted
-	mergeFailed bool // max retries exceeded — give up
-	tooSoon     bool // last /m was within cooldown window
-	err         error
+	prKey   string
+	posted  bool
+	failed  bool // max retries exceeded
+	tooSoon bool
+	err     error
 }
 
-// autoMergeCmd checks the /m comment count on a PR and posts if appropriate.
+type autoRerunResultMsg struct {
+	prKey  string
+	reran  bool
+	failed bool // max retries exceeded
+	err    error
+}
+
+// Commands
+
+// autoMergeCmd checks /m comment count from the GitHub API, then posts if appropriate.
 func autoMergeCmd(client *GitHubClient, pr PR, cfg Config) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -77,24 +94,49 @@ func autoMergeCmd(client *GitHubClient, pr PR, cfg Config) tea.Cmd {
 
 		key := pr.RepoShort()
 
-		count, lastMTime, err := client.countMergeComments(ctx, pr.Repo, pr.Number, cfg.MergeComment)
+		count, lastTime, err := client.countMergeComments(ctx, pr.Repo, pr.Number, cfg.MergeComment)
 		if err != nil {
 			return autoMergeResultMsg{prKey: key, err: err}
 		}
 
-		if count >= cfg.AutoMergeMaxRetries {
-			return autoMergeResultMsg{prKey: key, mergeFailed: true}
+		if count >= cfg.AutoMaxRetries {
+			return autoMergeResultMsg{prKey: key, failed: true}
 		}
 
-		if !lastMTime.IsZero() && time.Since(lastMTime) < cfg.AutoMergeCooldown {
+		if !lastTime.IsZero() && time.Since(lastTime) < cfg.AutoCooldown {
 			return autoMergeResultMsg{prKey: key, tooSoon: true}
 		}
 
-		err = client.postCommentRaw(ctx, pr.Repo, pr.Number, cfg.MergeComment)
-		if err != nil {
+		if err := client.postCommentRaw(ctx, pr.Repo, pr.Number, cfg.MergeComment); err != nil {
 			return autoMergeResultMsg{prKey: key, err: err}
 		}
 
 		return autoMergeResultMsg{prKey: key, posted: true}
+	}
+}
+
+// autoRerunCmd checks run_attempt from the GitHub API, then reruns if appropriate.
+func autoRerunCmd(client *GitHubClient, pr PR, maxRetries int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		key := pr.RepoShort()
+
+		maxAttempt, err := client.maxFailedRunAttempt(ctx, pr.Repo, pr.HeadSHA)
+		if err != nil {
+			return autoRerunResultMsg{prKey: key, err: err}
+		}
+
+		// run_attempt=1 is the original run, so run_attempt > maxRetries means we've rerun maxRetries times
+		if maxAttempt > maxRetries {
+			return autoRerunResultMsg{prKey: key, failed: true}
+		}
+
+		if err := client.rerunFailedJobs(ctx, pr.Repo, pr.HeadSHA); err != nil {
+			return autoRerunResultMsg{prKey: key, err: err}
+		}
+
+		return autoRerunResultMsg{prKey: key, reran: true}
 	}
 }
