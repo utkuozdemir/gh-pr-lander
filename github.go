@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -24,32 +25,39 @@ func newGitHubClient(token string) *GitHubClient {
 	}
 }
 
-func (c *GitHubClient) getUsername(ctx context.Context) (string, error) {
-	if c.username != "" {
-		return c.username, nil
-	}
-
+// resolveUsername fetches and caches the authenticated user's login.
+// Call once at startup to avoid races from concurrent Bubble Tea commands.
+func (c *GitHubClient) resolveUsername(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user", nil)
 	if err != nil {
-		return "", err
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("GET /user HTTP %d: %s", resp.StatusCode, string(body))
+	}
 
 	var user struct {
 		Login string `json:"login"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
-		return "", err
+		return err
 	}
 
 	c.username = user.Login
-	return c.username, nil
+	return nil
+}
+
+func (c *GitHubClient) getUsername() string {
+	return c.username
 }
 
 // GraphQL response types
@@ -68,7 +76,13 @@ type graphQLData struct {
 }
 
 type searchResult struct {
-	Nodes []prNode `json:"nodes"`
+	Nodes    []prNode `json:"nodes"`
+	PageInfo pageInfo `json:"pageInfo"`
+}
+
+type pageInfo struct {
+	HasNextPage bool   `json:"hasNextPage"`
+	EndCursor   string `json:"endCursor"`
 }
 
 type prNode struct {
@@ -118,12 +132,12 @@ type commitNode struct {
 }
 
 type commitDetail struct {
-	OID                string              `json:"oid"`
-	StatusCheckRollup  *statusCheckRollup  `json:"statusCheckRollup"`
+	OID               string             `json:"oid"`
+	StatusCheckRollup *statusCheckRollup `json:"statusCheckRollup"`
 }
 
 type statusCheckRollup struct {
-	State    string       `json:"state"`
+	State    string      `json:"state"`
 	Contexts contextConn `json:"contexts"`
 }
 
@@ -154,8 +168,12 @@ type authorNode struct {
 	Login string `json:"login"`
 }
 
-const prQuery = `query($query: String!) {
-  search(query: $query, type: ISSUE, first: 50) {
+const prQuery = `query($query: String!, $after: String) {
+  search(query: $query, type: ISSUE, first: 100, after: $after) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
     nodes {
       ... on PullRequest {
         id
@@ -257,35 +275,83 @@ func (c *GitHubClient) graphql(ctx context.Context, query string, variables map[
 }
 
 func (c *GitHubClient) fetchPRs(ctx context.Context, orgs []string) ([]PR, error) {
-	orgFilter := make([]string, len(orgs))
-	for i, org := range orgs {
-		orgFilter[i] = "org:" + org
-	}
-	searchQuery := fmt.Sprintf("is:pr is:open author:@me %s", strings.Join(orgFilter, " "))
+	seen := make(map[string]PR)
 
-	variables := map[string]any{"query": searchQuery}
-
-	var resp graphQLResponse
-	if err := c.graphql(ctx, prQuery, variables, &resp); err != nil {
-		return nil, err
-	}
-
-	if len(resp.Errors) > 0 {
-		msgs := make([]string, len(resp.Errors))
-		for i, e := range resp.Errors {
-			msgs[i] = e.Message
+	for _, org := range orgs {
+		orgPRs, err := c.fetchPRsForOrg(ctx, org)
+		if err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("graphql errors: %s", strings.Join(msgs, "; "))
+		for _, pr := range orgPRs {
+			seen[pr.RepoShort()] = pr
+		}
 	}
 
-	prs := make([]PR, 0, len(resp.Data.Search.Nodes))
-	for _, node := range resp.Data.Search.Nodes {
-		prs = append(prs, prFromNode(node))
+	prs := make([]PR, 0, len(seen))
+	for _, pr := range seen {
+		prs = append(prs, pr)
 	}
 
+	c.annotateFailedWorkflowRuns(ctx, prs)
 	sortPRs(prs)
 
 	return prs, nil
+}
+
+func (c *GitHubClient) fetchPRsForOrg(ctx context.Context, org string) ([]PR, error) {
+	searchQuery := fmt.Sprintf("is:pr is:open author:@me org:%s", org)
+	var prs []PR
+	var after any
+
+	for {
+		variables := map[string]any{
+			"query": searchQuery,
+			"after": after,
+		}
+
+		var resp graphQLResponse
+		if err := c.graphql(ctx, prQuery, variables, &resp); err != nil {
+			return nil, err
+		}
+
+		if len(resp.Errors) > 0 {
+			msgs := make([]string, len(resp.Errors))
+			for i, e := range resp.Errors {
+				msgs[i] = e.Message
+			}
+			return nil, fmt.Errorf("graphql errors for org %s: %s", org, strings.Join(msgs, "; "))
+		}
+
+		for _, node := range resp.Data.Search.Nodes {
+			prs = append(prs, prFromNode(node))
+		}
+
+		page := resp.Data.Search.PageInfo
+		if !page.HasNextPage || page.EndCursor == "" {
+			break
+		}
+		after = page.EndCursor
+	}
+
+	return prs, nil
+}
+
+func (c *GitHubClient) annotateFailedWorkflowRuns(ctx context.Context, prs []PR) {
+	for i := range prs {
+		if prs[i].CIStatus != CIFailed || prs[i].HeadSHA == "" {
+			continue
+		}
+
+		summary, err := c.failedWorkflowRunsSummary(ctx, prs[i].Repo, prs[i].HeadSHA)
+		if err != nil {
+			continue
+		}
+
+		prs[i].FailedWorkflowRunsKnown = true
+		prs[i].FailedWorkflowRuns = summary.Count
+		prs[i].MaxFailedRunAttempt = summary.MaxAttempt
+		prs[i].LatestFailedRunUpdate = summary.LatestUpdatedAt
+	}
 }
 
 // postCommentRaw posts a comment without any duplicate checking.
@@ -315,42 +381,66 @@ func (c *GitHubClient) postCommentRaw(ctx context.Context, repoFullName string, 
 	return nil
 }
 
+type issueComment struct {
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+	User      struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+func (c *GitHubClient) listIssueComments(ctx context.Context, repoFullName string, prNumber int, query string) ([]issueComment, error) {
+	nextURL := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments?%s", repoFullName, prNumber, query)
+	var comments []issueComment
+
+	for nextURL != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.token)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("list comments: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("list comments HTTP %d: %s", resp.StatusCode, string(body))
+		}
+
+		var page []issueComment
+		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("decode comments: %w", err)
+		}
+
+		comments = append(comments, page...)
+		nextURL = nextPageURL(resp.Header.Get("Link"))
+		_ = resp.Body.Close()
+	}
+
+	return comments, nil
+}
+
 // postComment checks for a recent duplicate, then posts. Returns (duplicate=true, nil)
 // if the authenticated user already posted the same comment within the last minute.
 func (c *GitHubClient) postComment(ctx context.Context, repoFullName string, prNumber int, body string) (duplicate bool, err error) {
-	username, err := c.getUsername(ctx)
-	if err != nil {
-		return false, fmt.Errorf("get username: %w", err)
+	username := c.getUsername()
+	if username == "" {
+		return false, fmt.Errorf("authenticated GitHub username is not resolved")
 	}
 
-	listURL := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments?sort=created&direction=desc&per_page=5", repoFullName, prNumber)
-	listReq, err := http.NewRequestWithContext(ctx, http.MethodGet, listURL, nil)
+	comments, err := c.listIssueComments(ctx, repoFullName, prNumber, "sort=created&direction=desc&per_page=100")
 	if err != nil {
 		return false, err
-	}
-	listReq.Header.Set("Authorization", "Bearer "+c.token)
-
-	listResp, err := c.httpClient.Do(listReq)
-	if err != nil {
-		return false, fmt.Errorf("list comments: %w", err)
-	}
-	defer func() { _ = listResp.Body.Close() }()
-
-	var comments []struct {
-		Body      string `json:"body"`
-		CreatedAt string `json:"created_at"`
-		User      struct {
-			Login string `json:"login"`
-		} `json:"user"`
-	}
-	if err := json.NewDecoder(listResp.Body).Decode(&comments); err != nil {
-		return false, fmt.Errorf("decode comments: %w", err)
 	}
 
 	for _, comment := range comments {
 		if strings.EqualFold(comment.User.Login, username) && strings.TrimSpace(comment.Body) == body {
-			created, parseErr := time.Parse(time.RFC3339, comment.CreatedAt)
-			if parseErr == nil && time.Since(created) < time.Minute {
+			if time.Since(comment.CreatedAt) < time.Minute {
 				return true, nil
 			}
 		}
@@ -362,42 +452,21 @@ func (c *GitHubClient) postComment(ctx context.Context, repoFullName string, prN
 // countMergeComments counts comments with the given body from the authenticated user.
 // Returns the total count and the time of the most recent one.
 func (c *GitHubClient) countMergeComments(ctx context.Context, repoFullName string, prNumber int, commentBody string) (count int, lastTime time.Time, err error) {
-	username, err := c.getUsername(ctx)
-	if err != nil {
-		return 0, time.Time{}, fmt.Errorf("get username: %w", err)
+	username := c.getUsername()
+	if username == "" {
+		return 0, time.Time{}, fmt.Errorf("authenticated GitHub username is not resolved")
 	}
 
-	url := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments?per_page=100", repoFullName, prNumber)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	comments, err := c.listIssueComments(ctx, repoFullName, prNumber, "per_page=100")
 	if err != nil {
 		return 0, time.Time{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, time.Time{}, fmt.Errorf("list comments: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var comments []struct {
-		Body      string `json:"body"`
-		CreatedAt string `json:"created_at"`
-		User      struct {
-			Login string `json:"login"`
-		} `json:"user"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&comments); err != nil {
-		return 0, time.Time{}, fmt.Errorf("decode comments: %w", err)
 	}
 
 	for _, comment := range comments {
 		if strings.EqualFold(comment.User.Login, username) && strings.TrimSpace(comment.Body) == commentBody {
 			count++
-			created, parseErr := time.Parse(time.RFC3339, comment.CreatedAt)
-			if parseErr == nil && created.After(lastTime) {
-				lastTime = created
+			if comment.CreatedAt.After(lastTime) {
+				lastTime = comment.CreatedAt
 			}
 		}
 	}
@@ -405,75 +474,117 @@ func (c *GitHubClient) countMergeComments(ctx context.Context, repoFullName stri
 	return count, lastTime, nil
 }
 
-// maxFailedRunAttempt returns the highest run_attempt among failed workflow runs for a SHA.
-// Returns 0 if there are no failed runs.
-func (c *GitHubClient) maxFailedRunAttempt(ctx context.Context, repoFullName string, headSHA string) (int, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/actions/runs?head_sha=%s", repoFullName, headSHA)
+type workflowRun struct {
+	ID         int64     `json:"id"`
+	RunAttempt int       `json:"run_attempt"`
+	Status     string    `json:"status"`
+	Conclusion string    `json:"conclusion"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+type failedWorkflowSummary struct {
+	Count           int
+	MaxAttempt      int
+	LatestUpdatedAt time.Time
+}
+
+func (c *GitHubClient) failedWorkflowRunsSummary(ctx context.Context, repoFullName string, headSHA string) (failedWorkflowSummary, error) {
+	runs, err := c.listWorkflowRuns(ctx, repoFullName, headSHA)
 	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("list runs: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var runs struct {
-		WorkflowRuns []struct {
-			RunAttempt int    `json:"run_attempt"`
-			Conclusion string `json:"conclusion"`
-		} `json:"workflow_runs"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
-		return 0, fmt.Errorf("decode runs: %w", err)
+		return failedWorkflowSummary{}, err
 	}
 
-	maxAttempt := 0
-	for _, run := range runs.WorkflowRuns {
-		if (run.Conclusion == "failure" || run.Conclusion == "timed_out" || run.Conclusion == "cancelled") && run.RunAttempt > maxAttempt {
-			maxAttempt = run.RunAttempt
+	var summary failedWorkflowSummary
+	for _, run := range runs {
+		if isFailedWorkflowConclusion(run.Conclusion) {
+			summary.Count++
+			if run.RunAttempt > summary.MaxAttempt {
+				summary.MaxAttempt = run.RunAttempt
+			}
+			if run.UpdatedAt.After(summary.LatestUpdatedAt) {
+				summary.LatestUpdatedAt = run.UpdatedAt
+			}
 		}
 	}
 
-	return maxAttempt, nil
+	return summary, nil
+}
+
+func (c *GitHubClient) listWorkflowRuns(ctx context.Context, repoFullName string, headSHA string) ([]workflowRun, error) {
+	nextURL := fmt.Sprintf("https://api.github.com/repos/%s/actions/runs?head_sha=%s&per_page=100", repoFullName, url.QueryEscape(headSHA))
+	var allRuns []workflowRun
+
+	for nextURL != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.token)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("list runs: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("list runs HTTP %d: %s", resp.StatusCode, string(body))
+		}
+
+		var runs struct {
+			WorkflowRuns []workflowRun `json:"workflow_runs"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("decode runs: %w", err)
+		}
+
+		allRuns = append(allRuns, runs.WorkflowRuns...)
+		nextURL = nextPageURL(resp.Header.Get("Link"))
+		_ = resp.Body.Close()
+	}
+
+	return allRuns, nil
+}
+
+func isFailedWorkflowConclusion(conclusion string) bool {
+	switch conclusion {
+	case "failure", "timed_out", "cancelled":
+		return true
+	default:
+		return false
+	}
+}
+
+func nextPageURL(linkHeader string) string {
+	for part := range strings.SplitSeq(linkHeader, ",") {
+		sections := strings.Split(part, ";")
+		if len(sections) < 2 {
+			continue
+		}
+
+		if strings.TrimSpace(sections[1]) != `rel="next"` {
+			continue
+		}
+
+		u := strings.TrimSpace(sections[0])
+		u = strings.TrimPrefix(u, "<")
+		u = strings.TrimSuffix(u, ">")
+		return u
+	}
+	return ""
 }
 
 func (c *GitHubClient) rerunFailedJobs(ctx context.Context, repoFullName string, headSHA string) error {
-	// First, find workflow runs for this commit
-	url := fmt.Sprintf("https://api.github.com/repos/%s/actions/runs?head_sha=%s", repoFullName, headSHA)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	runs, err := c.listWorkflowRuns(ctx, repoFullName, headSHA)
 	if err != nil {
 		return err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("list runs: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var runs struct {
-		WorkflowRuns []struct {
-			ID         int64  `json:"id"`
-			Status     string `json:"status"`
-			Conclusion string `json:"conclusion"`
-		} `json:"workflow_runs"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&runs); err != nil {
-		return fmt.Errorf("decode runs: %w", err)
-	}
-
 	reran := 0
-	for _, run := range runs.WorkflowRuns {
-		if run.Conclusion == "failure" || run.Conclusion == "timed_out" || run.Conclusion == "cancelled" {
+	for _, run := range runs {
+		if isFailedWorkflowConclusion(run.Conclusion) {
 			rerunURL := fmt.Sprintf("https://api.github.com/repos/%s/actions/runs/%d/rerun-failed-jobs", repoFullName, run.ID)
 
 			rerunReq, err := http.NewRequestWithContext(ctx, http.MethodPost, rerunURL, nil)
@@ -503,30 +614,37 @@ func (c *GitHubClient) rerunFailedJobs(ctx context.Context, repoFullName string,
 	return nil
 }
 
-// isPRMerged checks whether a PR has been merged (not just closed).
-func (c *GitHubClient) isPRMerged(ctx context.Context, repoFullName string, prNumber int) (bool, error) {
+type pullRequestState struct {
+	State  string `json:"state"`
+	Merged bool   `json:"merged"`
+}
+
+func (c *GitHubClient) getPRState(ctx context.Context, repoFullName string, prNumber int) (pullRequestState, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/pulls/%d", repoFullName, prNumber)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return false, err
+		return pullRequestState{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return false, fmt.Errorf("get PR: %w", err)
+		return pullRequestState{}, fmt.Errorf("get PR: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	var pr struct {
-		Merged bool `json:"merged"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
-		return false, fmt.Errorf("decode PR: %w", err)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return pullRequestState{}, fmt.Errorf("get PR HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	return pr.Merged, nil
+	var pr pullRequestState
+	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+		return pullRequestState{}, fmt.Errorf("decode PR: %w", err)
+	}
+
+	return pr, nil
 }
 
 // deleteBranch deletes a branch from a repo. Used to clean up after merge.

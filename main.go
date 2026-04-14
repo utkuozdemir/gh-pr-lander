@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -45,9 +46,30 @@ func main() {
 	if pollInterval < 10*time.Second {
 		pollInterval = 10 * time.Second
 	}
+	if autoMaxRetries < 1 {
+		autoMaxRetries = 1
+	}
+	if autoCooldown < 0 {
+		autoCooldown = 0
+	}
+	if rebaseCountdown < 0 {
+		rebaseCountdown = 0
+	}
+
+	var parsedOrgs []string
+	for o := range strings.SplitSeq(orgs, ",") {
+		o = strings.TrimSpace(o)
+		if o != "" {
+			parsedOrgs = append(parsedOrgs, o)
+		}
+	}
+	if len(parsedOrgs) == 0 {
+		fmt.Fprintln(os.Stderr, "error: no orgs specified")
+		os.Exit(1)
+	}
 
 	cfg := Config{
-		Orgs:                  strings.Split(orgs, ","),
+		Orgs:                  parsedOrgs,
 		PollInterval:          pollInterval,
 		DataDir:               dataDir,
 		MergeComment:          mergeComment,
@@ -78,6 +100,14 @@ func main() {
 	notificationsEnabled = cfg.Notifications
 
 	client := newGitHubClient(token)
+
+	userCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := client.resolveUsername(userCtx); err != nil {
+		cancel()
+		fmt.Fprintf(os.Stderr, "error: could not resolve GitHub username: %v\n", err)
+		os.Exit(1)
+	}
+	cancel()
 
 	m := newModel(cfg, client)
 	p := tea.NewProgram(m, tea.WithAltScreen())

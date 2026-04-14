@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // BaseStatus represents the PR's relationship with its base branch.
@@ -92,6 +93,11 @@ type PR struct {
 	Checks           CheckSummary
 	MergeStateStatus string // raw from GitHub
 	ReviewDecision   string // raw from GitHub
+	// FailedWorkflowRuns* is populated from the Actions REST API for failed PRs.
+	FailedWorkflowRunsKnown bool
+	FailedWorkflowRuns      int
+	MaxFailedRunAttempt     int
+	LatestFailedRunUpdate   time.Time
 }
 
 func (pr PR) RepoShort() string {
@@ -213,10 +219,11 @@ func computeCIStatus(node prNode) (CIStatus, CheckSummary) {
 		}
 	}
 
-	// If the total count from GH is higher, there are more checks we didn't fetch
-	if commit.StatusCheckRollup.Contexts.TotalCount > summary.Total {
-		summary.Total = commit.StatusCheckRollup.Contexts.TotalCount
-		summary.Pending += commit.StatusCheckRollup.Contexts.TotalCount - summary.Total
+	// If the total count from GH is higher, there are more checks we didn't fetch.
+	// Treat unfetched checks as pending (they could be failing — safer than assuming passed).
+	if unfetched := commit.StatusCheckRollup.Contexts.TotalCount - summary.Total; unfetched > 0 {
+		summary.Pending += unfetched
+		summary.Total += unfetched
 	}
 
 	if summary.Failed > 0 {
@@ -240,14 +247,6 @@ func computeReviewStatus(node prNode) ReviewStatus {
 	case "REVIEW_REQUIRED":
 		return ReviewPending
 	default:
-		// No review required or no reviews
-		if len(node.Reviews.Nodes) > 0 {
-			for _, r := range node.Reviews.Nodes {
-				if strings.ToUpper(r.State) == "APPROVED" {
-					return ReviewApproved
-				}
-			}
-		}
 		return ReviewNone
 	}
 }
@@ -266,6 +265,9 @@ func computeOverallStatus(pr PR) OverallStatus {
 		return StatusStale
 	}
 	if pr.CIStatus == CIRunning {
+		return StatusPending
+	}
+	if pr.ReviewStatus == ReviewPending {
 		return StatusPending
 	}
 	if pr.BaseStatus == BaseSynced && (pr.CIStatus == CIPassed || pr.CIStatus == CINone) {

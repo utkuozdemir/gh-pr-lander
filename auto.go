@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,25 +15,30 @@ import (
 // db.yaml — just tracks which PRs have auto features enabled.
 // All retry counts come from the GitHub API (comments for merge, run_attempt for reruns).
 type dbData struct {
-	AutoMerge []string `yaml:"auto_merge,omitempty"`
-	AutoRerun []string `yaml:"auto_rerun,omitempty"`
+	AutoMerge     []string             `yaml:"auto_merge,omitempty"`
+	AutoRerun     []string             `yaml:"auto_rerun,omitempty"`
+	AutoRerunLast map[string]time.Time `yaml:"auto_rerun_last,omitempty"`
 }
 
 func dbPath(dataDir string) string {
 	return filepath.Join(dataDir, "db.yaml")
 }
 
-func loadDB(dataDir string) (autoMerge, autoRerun map[string]bool) {
+func loadDB(dataDir string) (autoMerge, autoRerun map[string]bool, autoRerunLast map[string]time.Time, err error) {
 	autoMerge = make(map[string]bool)
 	autoRerun = make(map[string]bool)
+	autoRerunLast = make(map[string]time.Time)
 
 	data, err := os.ReadFile(dbPath(dataDir))
 	if err != nil {
+		if os.IsNotExist(err) {
+			err = nil
+		}
 		return
 	}
 
 	var d dbData
-	if err := yaml.Unmarshal(data, &d); err != nil {
+	if err = yaml.Unmarshal(data, &d); err != nil {
 		return
 	}
 
@@ -42,11 +48,12 @@ func loadDB(dataDir string) (autoMerge, autoRerun map[string]bool) {
 	for _, key := range d.AutoRerun {
 		autoRerun[key] = true
 	}
+	maps.Copy(autoRerunLast, d.AutoRerunLast)
 
 	return
 }
 
-func saveDB(dataDir string, autoMerge, autoRerun map[string]bool) {
+func saveDB(dataDir string, autoMerge, autoRerun map[string]bool, autoRerunLast map[string]time.Time) error {
 	var d dbData
 
 	for key := range autoMerge {
@@ -58,13 +65,44 @@ func saveDB(dataDir string, autoMerge, autoRerun map[string]bool) {
 		d.AutoRerun = append(d.AutoRerun, key)
 	}
 	sort.Strings(d.AutoRerun)
+	if len(autoRerunLast) > 0 {
+		d.AutoRerunLast = make(map[string]time.Time, len(autoRerunLast))
+		for key, last := range autoRerunLast {
+			if autoRerun[key] && !last.IsZero() {
+				d.AutoRerunLast[key] = last
+			}
+		}
+	}
 
 	data, err := yaml.Marshal(d)
 	if err != nil {
-		return
+		return err
 	}
 
-	_ = os.WriteFile(dbPath(dataDir), data, 0o644)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(dataDir, ".db.yaml.*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(tmpName, dbPath(dataDir))
 }
 
 // Messages
@@ -78,10 +116,12 @@ type autoMergeResultMsg struct {
 }
 
 type autoRerunResultMsg struct {
-	prKey  string
-	reran  bool
-	failed bool // max retries exceeded
-	err    error
+	prKey       string
+	reran       bool
+	failed      bool // max retries exceeded
+	unavailable bool // no failed GitHub Actions runs exist for this SHA
+	reranAt     time.Time
+	err         error
 }
 
 // Commands
@@ -123,13 +163,16 @@ func autoRerunCmd(client *GitHubClient, pr PR, maxRetries int) tea.Cmd {
 
 		key := pr.RepoShort()
 
-		maxAttempt, err := client.maxFailedRunAttempt(ctx, pr.Repo, pr.HeadSHA)
+		summary, err := client.failedWorkflowRunsSummary(ctx, pr.Repo, pr.HeadSHA)
 		if err != nil {
 			return autoRerunResultMsg{prKey: key, err: err}
 		}
+		if summary.Count == 0 {
+			return autoRerunResultMsg{prKey: key, unavailable: true}
+		}
 
 		// run_attempt=1 is the original run, so run_attempt > maxRetries means we've rerun maxRetries times
-		if maxAttempt > maxRetries {
+		if summary.MaxAttempt > maxRetries {
 			return autoRerunResultMsg{prKey: key, failed: true}
 		}
 
@@ -137,6 +180,6 @@ func autoRerunCmd(client *GitHubClient, pr PR, maxRetries int) tea.Cmd {
 			return autoRerunResultMsg{prKey: key, err: err}
 		}
 
-		return autoRerunResultMsg{prKey: key, reran: true}
+		return autoRerunResultMsg{prKey: key, reran: true, reranAt: time.Now()}
 	}
 }
