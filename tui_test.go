@@ -124,6 +124,88 @@ func TestAutoCmdsUsesPersistedAutoRerunCooldown(t *testing.T) {
 	}
 }
 
+func TestToggleAutoMergeChecksImmediatelyWhenReady(t *testing.T) {
+	key := "org/repo#1"
+	m := testAutoToggleModel(t, PR{
+		Repo:          "org/repo",
+		Number:        1,
+		OverallStatus: StatusReady,
+	})
+
+	updated, _ := m.toggleAuto(m.autoMerge, m.mergeFailed, "automerge")
+	got := updated.(model)
+
+	if !got.autoMerge[key] {
+		t.Fatal("automerge was not enabled")
+	}
+	if got.lastAutoCheck["merge:"+key].IsZero() {
+		t.Fatal("expected automerge to check immediately")
+	}
+}
+
+func TestToggleAutoRerunChecksImmediatelyWhenEligible(t *testing.T) {
+	key := "org/repo#1"
+	m := testAutoToggleModel(t, PR{
+		Repo:                    "org/repo",
+		Number:                  1,
+		CIStatus:                CIFailed,
+		FailedWorkflowRunsKnown: true,
+		FailedWorkflowRuns:      1,
+	})
+
+	updated, _ := m.toggleAuto(m.autoRerun, m.rerunFailed, "autorerun")
+	got := updated.(model)
+
+	if !got.autoRerun[key] {
+		t.Fatal("autorerun was not enabled")
+	}
+	if got.lastAutoCheck["rerun:"+key].IsZero() {
+		t.Fatal("expected autorerun to check immediately")
+	}
+}
+
+func TestToggleAutoRerunRespectsPersistedCooldown(t *testing.T) {
+	key := "org/repo#1"
+	m := testAutoToggleModel(t, PR{
+		Repo:                    "org/repo",
+		Number:                  1,
+		CIStatus:                CIFailed,
+		FailedWorkflowRunsKnown: true,
+		FailedWorkflowRuns:      1,
+	})
+	m.lastAutoRerun[key] = time.Now()
+
+	updated, _ := m.toggleAuto(m.autoRerun, m.rerunFailed, "autorerun")
+	got := updated.(model)
+
+	if !got.autoRerun[key] {
+		t.Fatal("autorerun was not enabled")
+	}
+	if !got.lastAutoCheck["rerun:"+key].IsZero() {
+		t.Fatal("autorerun should not check immediately while persisted cooldown is active")
+	}
+}
+
+func TestToggleAutoDisableClearsCheckCooldown(t *testing.T) {
+	key := "org/repo#1"
+	m := testAutoToggleModel(t, PR{
+		Repo:   "org/repo",
+		Number: 1,
+	})
+	m.autoRerun[key] = true
+	m.lastAutoCheck["rerun:"+key] = time.Now()
+
+	updated, _ := m.toggleAuto(m.autoRerun, m.rerunFailed, "autorerun")
+	got := updated.(model)
+
+	if got.autoRerun[key] {
+		t.Fatal("autorerun was not disabled")
+	}
+	if !got.lastAutoCheck["rerun:"+key].IsZero() {
+		t.Fatal("autorerun check cooldown was not cleared")
+	}
+}
+
 func TestTruncateDisplayWidth(t *testing.T) {
 	tests := []struct {
 		name string
@@ -144,5 +226,25 @@ func TestTruncateDisplayWidth(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tt.want, got)
 			}
 		})
+	}
+}
+
+func testAutoToggleModel(t *testing.T, pr PR) model {
+	t.Helper()
+
+	return model{
+		config: Config{
+			DataDir:        t.TempDir(),
+			AutoCooldown:   time.Hour,
+			AutoMaxRetries: 3,
+			MergeComment:   "/m",
+		},
+		prs:           []PR{pr},
+		autoMerge:     map[string]bool{},
+		autoRerun:     map[string]bool{},
+		lastAutoRerun: map[string]time.Time{},
+		mergeFailed:   map[string]bool{},
+		rerunFailed:   map[string]bool{},
+		lastAutoCheck: map[string]time.Time{},
 	}
 }

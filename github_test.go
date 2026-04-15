@@ -86,6 +86,31 @@ func TestFetchPRsQueriesEachOrgAndPaginates(t *testing.T) {
 	}
 }
 
+func TestFetchPRsFiltersArchivedRepos(t *testing.T) {
+	client := &GitHubClient{
+		token:    "token",
+		username: "me",
+		httpClient: &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			body := graphQLPRPage(false, "",
+				graphQLPRNode("org/live", 1, "sha1"),
+				graphQLArchivedPRNode("org/archived", 2, "sha2"),
+			)
+			return testJSONResponse(http.StatusOK, body, nil), nil
+		})},
+	}
+
+	prs, err := client.fetchPRs(context.Background(), []string{"org"})
+	if err != nil {
+		t.Fatalf("fetchPRs: %v", err)
+	}
+	if len(prs) != 1 {
+		t.Fatalf("expected only non-archived PR, got %d: %#v", len(prs), prs)
+	}
+	if prs[0].Repo != "org/live" {
+		t.Fatalf("expected live repo PR, got %s", prs[0].Repo)
+	}
+}
+
 func TestCountMergeCommentsPaginatesAndRequiresUsername(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	client := &GitHubClient{
@@ -162,6 +187,14 @@ func graphQLPRPage(hasNext bool, cursor string, nodes ...string) string {
 }
 
 func graphQLPRNode(repo string, number int, sha string) string {
+	return graphQLPRNodeWithArchived(repo, number, sha, false)
+}
+
+func graphQLArchivedPRNode(repo string, number int, sha string) string {
+	return graphQLPRNodeWithArchived(repo, number, sha, true)
+}
+
+func graphQLPRNodeWithArchived(repo string, number int, sha string, archived bool) string {
 	parts := strings.Split(repo, "/")
 	return `{
 		"number":` + intJSON(number) + `,
@@ -174,7 +207,7 @@ func graphQLPRNode(repo string, number int, sha string) string {
 		"mergeable":"MERGEABLE",
 		"mergeStateStatus":"CLEAN",
 		"reviewDecision":"",
-		"repository":{"nameWithOwner":"` + repo + `","name":"` + parts[1] + `","owner":{"login":"` + parts[0] + `"}},
+		"repository":{"nameWithOwner":"` + repo + `","name":"` + parts[1] + `","isArchived":` + boolJSON(archived) + `,"owner":{"login":"` + parts[0] + `"}},
 		"headRepository":{"nameWithOwner":"me/` + parts[1] + `","name":"` + parts[1] + `","owner":{"login":"me"}},
 		"headRef":{"name":"branch","target":{"oid":"` + sha + `"}},
 		"commits":{"nodes":[{"commit":{"oid":"` + sha + `","statusCheckRollup":null}}]},

@@ -486,11 +486,12 @@ func (m model) toggleAuto(entries map[string]bool, failedMap map[string]bool, la
 		return m, nil
 	}
 	key := item.pr.RepoShort()
+	enabled := false
 
 	if entries[key] {
 		delete(entries, key)
 		delete(failedMap, key)
-		delete(m.lastAutoCheck, key)
+		m.clearAutoCheck(label, key)
 		if label == "autorerun" {
 			delete(m.lastAutoRerun, key)
 		}
@@ -498,6 +499,7 @@ func (m model) toggleAuto(entries map[string]bool, failedMap map[string]bool, la
 		m.status = indicatorAuto.Render("⚡ " + label + " disabled for " + key)
 	} else {
 		entries[key] = true
+		enabled = true
 		slog.Info(label+" enabled", "pr", key)
 		m.status = indicatorAuto.Render("⚡ " + label + " enabled for " + key)
 	}
@@ -505,7 +507,16 @@ func (m model) toggleAuto(entries map[string]bool, failedMap map[string]bool, la
 	if err := m.saveDB(); err != nil {
 		slog.Error("failed to save db", "error", err)
 		m.status = errorStyle.Render("✗ Failed to save db.yaml: " + err.Error())
+		return m, clearStatusCmd()
 	}
+
+	if enabled {
+		if cmd := m.immediateAutoCmd(item.pr, label); cmd != nil {
+			m.status = indicatorAuto.Render("⚡ " + label + " enabled for " + key + "; checking now")
+			return m, tea.Batch(clearStatusCmd(), cmd)
+		}
+	}
+
 	return m, clearStatusCmd()
 }
 
@@ -523,34 +534,87 @@ func (m model) isRerunFailed(key string) bool {
 	return m.autoRerun[key] && m.rerunFailed[key]
 }
 
-func (m model) autoCmds() []tea.Cmd {
+func (m *model) autoCmds() []tea.Cmd {
 	var cmds []tea.Cmd
 
 	for _, pr := range m.prs {
-		key := pr.RepoShort()
-
-		if m.autoMerge[key] && !m.mergeFailed[key] && pr.OverallStatus == StatusReady {
-			checkKey := "merge:" + key
-			if time.Since(m.lastAutoCheck[checkKey]) >= m.config.AutoCooldown {
-				m.lastAutoCheck[checkKey] = time.Now()
-				cmds = append(cmds, autoMergeCmd(m.client, pr, m.config))
-			}
+		if cmd := m.autoMergeCmd(pr); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
-
-		if m.autoRerun[key] && !m.rerunFailed[key] && pr.CIStatus == CIFailed &&
-			pr.FailedWorkflowRunsKnown && pr.FailedWorkflowRuns > 0 {
-			if last := m.lastAutoRerun[key]; !last.IsZero() && time.Since(last) < m.config.AutoCooldown {
-				continue
-			}
-			checkKey := "rerun:" + key
-			if time.Since(m.lastAutoCheck[checkKey]) >= m.config.AutoCooldown {
-				m.lastAutoCheck[checkKey] = time.Now()
-				cmds = append(cmds, autoRerunCmd(m.client, pr, m.config.AutoMaxRetries))
-			}
+		if cmd := m.autoRerunCmd(pr); cmd != nil {
+			cmds = append(cmds, cmd)
 		}
 	}
 
 	return cmds
+}
+
+func (m *model) immediateAutoCmd(pr PR, label string) tea.Cmd {
+	switch label {
+	case "automerge":
+		return m.autoMergeCmd(pr)
+	case "autorerun":
+		return m.autoRerunCmd(pr)
+	default:
+		return nil
+	}
+}
+
+func (m *model) autoMergeCmd(pr PR) tea.Cmd {
+	key := pr.RepoShort()
+	if !m.shouldAutoMerge(pr) || !m.markAutoCheck("merge", key) {
+		return nil
+	}
+
+	return autoMergeCmd(m.client, pr, m.config)
+}
+
+func (m *model) autoRerunCmd(pr PR) tea.Cmd {
+	key := pr.RepoShort()
+	if !m.shouldAutoRerun(pr) || !m.markAutoCheck("rerun", key) {
+		return nil
+	}
+
+	return autoRerunCmd(m.client, pr, m.config.AutoMaxRetries)
+}
+
+func (m model) shouldAutoMerge(pr PR) bool {
+	key := pr.RepoShort()
+	return m.autoMerge[key] && !m.mergeFailed[key] && pr.OverallStatus == StatusReady
+}
+
+func (m model) shouldAutoRerun(pr PR) bool {
+	key := pr.RepoShort()
+	if !m.autoRerun[key] || m.rerunFailed[key] || pr.CIStatus != CIFailed ||
+		!pr.FailedWorkflowRunsKnown || pr.FailedWorkflowRuns <= 0 {
+		return false
+	}
+
+	last := m.lastAutoRerun[key]
+	return last.IsZero() || time.Since(last) >= m.config.AutoCooldown
+}
+
+func (m *model) markAutoCheck(kind, key string) bool {
+	if m.lastAutoCheck == nil {
+		m.lastAutoCheck = make(map[string]time.Time)
+	}
+
+	checkKey := kind + ":" + key
+	if time.Since(m.lastAutoCheck[checkKey]) < m.config.AutoCooldown {
+		return false
+	}
+
+	m.lastAutoCheck[checkKey] = time.Now()
+	return true
+}
+
+func (m model) clearAutoCheck(label, key string) {
+	switch label {
+	case "automerge":
+		delete(m.lastAutoCheck, "merge:"+key)
+	case "autorerun":
+		delete(m.lastAutoCheck, "rerun:"+key)
+	}
 }
 
 // Merged PR tracking

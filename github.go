@@ -108,6 +108,7 @@ type repoNode struct {
 	NameWithOwner string    `json:"nameWithOwner"`
 	Name          string    `json:"name"`
 	Owner         ownerNode `json:"owner"`
+	IsArchived    bool      `json:"isArchived"`
 }
 
 type ownerNode struct {
@@ -187,11 +188,12 @@ const prQuery = `query($query: String!, $after: String) {
         mergeable
         mergeStateStatus
         reviewDecision
-        repository {
-          nameWithOwner
-          name
-          owner { login }
-        }
+	        repository {
+	          nameWithOwner
+	          name
+	          isArchived
+	          owner { login }
+	        }
         headRepository {
           nameWithOwner
           name
@@ -323,6 +325,9 @@ func (c *GitHubClient) fetchPRsForOrg(ctx context.Context, org string) ([]PR, er
 		}
 
 		for _, node := range resp.Data.Search.Nodes {
+			if node.Repository.IsArchived {
+				continue
+			}
 			prs = append(prs, prFromNode(node))
 		}
 
