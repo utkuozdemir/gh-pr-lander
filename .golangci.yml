@@ -1,0 +1,61 @@
+version: "2"
+linters:
+  default: all
+  disable:
+    - depguard # breaking things: https://github.com/atc0005/go-ci/issues/1024
+    - err113 # no need to wrap all errors, too much work
+    - exhaustruct # pointless
+    - gochecknoglobals # globals are sometimes ok
+    - testpackage # tests live in-package on purpose (white-box)
+    - wsl # deprecated
+    - noinlineerr # big fan of inline errors
+    - wrapcheck # don't want to wrap errors everywhere
+    - mnd # magic numbers are sometimes ok, this linter is too noisy
+    - nonamedreturns # named returns are useful to read errors in defer statements
+    - gomodguard # deprecated
+    # Bubble Tea / GitHub-client idioms that the following linters fight:
+    - ireturn # the Bubble Tea API is built around returning tea.Model / tea.Cmd interfaces
+    - recvcheck # Update/View must be value receivers, state helpers must be pointer receivers
+    - varnamelen # idiomatic short names (receiver m, loop i, builder b) read fine in small scopes
+    - cyclop # message/key switches in the update loop are naturally branchy
+    - funlen # a few cohesive funcs (flag parsing, update loop) are long on purpose
+    - funcorder # code is grouped by feature, not by exported-before-unexported
+    - tagliatelle # JSON tags must mirror GitHub's snake_case wire format
+    - gosmopolitan # the TUI intentionally uses unicode glyphs (✓ ✗ ⚡ …)
+    - paralleltest # small, fast, deterministic suite; parallelism adds nothing here
+    - lll # line length is already enforced by the golines formatter
+  settings:
+    goconst:
+      min-occurrences: 5
+    varnamelen:
+      min-name-length: 2
+    gosec:
+      excludes:
+        - G204 # this tool deliberately shells out (git rebase, gh, open, osascript)
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+      - legacy
+    rules:
+      - linters:
+          - goconst
+          - forcetypeassert # tests deliberately assert tea.Model back to model; a failed assert is a test failure
+        path: (.+)_test\.go
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
+    golines:
+      max-len: 120

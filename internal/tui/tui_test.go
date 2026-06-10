@@ -1,34 +1,46 @@
-package main
+package tui
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/utkuozdemir/sidero-rebaser/internal/config"
+	"github.com/utkuozdemir/sidero-rebaser/internal/github"
+	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
 )
 
-func TestModelIgnoresStalePRLoads(t *testing.T) {
-	m := model{
-		prs:           []PR{{Number: 1, Repo: "org/repo"}},
-		latestFetchID: 2,
-	}
-
-	updated, _ := m.Update(prsLoadedMsg{
-		requestID: 1,
-		prs:       []PR{{Number: 2, Repo: "org/repo"}},
-	})
-	got := updated.(model)
-
-	if len(got.prs) != 1 || got.prs[0].Number != 1 {
-		t.Fatalf("stale load replaced PRs: %#v", got.prs)
-	}
+// fakeClient is a no-op Client used to exercise the model without any network.
+type fakeClient struct {
+	username string
 }
+
+func (f fakeClient) PostComment(context.Context, string, int, string) (bool, error) {
+	return false, nil
+}
+func (f fakeClient) PostCommentRaw(context.Context, string, int, string) error { return nil }
+func (f fakeClient) CountMergeComments(context.Context, string, int, string) (int, time.Time, error) {
+	return 0, time.Time{}, nil
+}
+
+func (f fakeClient) FailedWorkflowRunsSummary(context.Context, string, string) (github.WorkflowSummary, error) {
+	return github.WorkflowSummary{}, nil
+}
+func (f fakeClient) RerunFailedJobs(context.Context, string, string) error { return nil }
+func (f fakeClient) GetPRState(context.Context, string, int) (github.PRState, error) {
+	return github.PRState{}, nil
+}
+func (f fakeClient) DeleteBranch(context.Context, string, string) error { return nil }
+func (f fakeClient) Username() string                                   { return f.username }
 
 func TestMergedCheckErrorDoesNotConfirmClosed(t *testing.T) {
 	key := "org/repo#1"
 	m := model{
+		client: fakeClient{},
 		recentlyMerged: map[string]*mergedPR{
-			key: &mergedPR{PR: PR{Repo: "org/repo", Number: 1}, GoneAt: time.Now()},
+			key: {PR: pr.PR{Repo: "org/repo", Number: 1}, GoneAt: time.Now()},
 		},
 	}
 
@@ -43,8 +55,9 @@ func TestMergedCheckErrorDoesNotConfirmClosed(t *testing.T) {
 func TestMergedCheckOpenRemovesGoneEntry(t *testing.T) {
 	key := "org/repo#1"
 	m := model{
+		client: fakeClient{},
 		recentlyMerged: map[string]*mergedPR{
-			key: &mergedPR{PR: PR{Repo: "org/repo", Number: 1}, GoneAt: time.Now()},
+			key: {PR: pr.PR{Repo: "org/repo", Number: 1}, GoneAt: time.Now()},
 		},
 	}
 
@@ -61,8 +74,8 @@ func TestRenderMergedItemUsesClosedDescription(t *testing.T) {
 	m := model{
 		width: 80,
 		recentlyMerged: map[string]*mergedPR{
-			key: &mergedPR{
-				PR:        PR{Repo: "org/repo", Number: 1, Title: "closed"},
+			key: {
+				PR:        pr.PR{Repo: "org/repo", Number: 1, Title: "closed"},
 				GoneAt:    time.Now().Add(-time.Minute),
 				Confirmed: true,
 				Merged:    false,
@@ -71,7 +84,7 @@ func TestRenderMergedItemUsesClosedDescription(t *testing.T) {
 	}
 
 	out := m.renderMergedItem(displayItem{
-		pr:     PR{Repo: "org/repo", Number: 1, Title: "closed"},
+		pr:     pr.PR{Repo: "org/repo", Number: 1, Title: "closed"},
 		merged: true,
 		goneAt: m.recentlyMerged[key].GoneAt,
 	}, false)
@@ -79,6 +92,7 @@ func TestRenderMergedItemUsesClosedDescription(t *testing.T) {
 	if !strings.Contains(out, "CLOSED") || !strings.Contains(out, "Closed") {
 		t.Fatalf("expected closed badge and description, got %q", out)
 	}
+
 	if strings.Contains(out, "Merged") {
 		t.Fatalf("closed item should not say merged, got %q", out)
 	}
@@ -86,10 +100,10 @@ func TestRenderMergedItemUsesClosedDescription(t *testing.T) {
 
 func TestDoRerunChecksRejectsFailedNonActionsChecks(t *testing.T) {
 	m := model{
-		prs: []PR{{
+		prs: []pr.PR{{
 			Repo:                    "org/repo",
 			Number:                  1,
-			CIStatus:                CIFailed,
+			CIStatus:                pr.CIFailed,
 			FailedWorkflowRunsKnown: true,
 			FailedWorkflowRuns:      0,
 		}},
@@ -105,11 +119,11 @@ func TestDoRerunChecksRejectsFailedNonActionsChecks(t *testing.T) {
 
 func TestAutoCmdsUsesPersistedAutoRerunCooldown(t *testing.T) {
 	m := model{
-		config: Config{AutoCooldown: time.Hour},
-		prs: []PR{{
+		config: config.Config{AutoCooldown: time.Hour},
+		prs: []pr.PR{{
 			Repo:                    "org/repo",
 			Number:                  1,
-			CIStatus:                CIFailed,
+			CIStatus:                pr.CIFailed,
 			FailedWorkflowRunsKnown: true,
 			FailedWorkflowRuns:      1,
 		}},
@@ -126,10 +140,10 @@ func TestAutoCmdsUsesPersistedAutoRerunCooldown(t *testing.T) {
 
 func TestToggleAutoMergeChecksImmediatelyWhenReady(t *testing.T) {
 	key := "org/repo#1"
-	m := testAutoToggleModel(t, PR{
+	m := testAutoToggleModel(t, pr.PR{
 		Repo:          "org/repo",
 		Number:        1,
-		OverallStatus: StatusReady,
+		OverallStatus: pr.StatusReady,
 	})
 
 	updated, _ := m.toggleAuto(m.autoMerge, m.mergeFailed, "automerge")
@@ -138,6 +152,7 @@ func TestToggleAutoMergeChecksImmediatelyWhenReady(t *testing.T) {
 	if !got.autoMerge[key] {
 		t.Fatal("automerge was not enabled")
 	}
+
 	if got.lastAutoCheck["merge:"+key].IsZero() {
 		t.Fatal("expected automerge to check immediately")
 	}
@@ -145,10 +160,10 @@ func TestToggleAutoMergeChecksImmediatelyWhenReady(t *testing.T) {
 
 func TestToggleAutoRerunChecksImmediatelyWhenEligible(t *testing.T) {
 	key := "org/repo#1"
-	m := testAutoToggleModel(t, PR{
+	m := testAutoToggleModel(t, pr.PR{
 		Repo:                    "org/repo",
 		Number:                  1,
-		CIStatus:                CIFailed,
+		CIStatus:                pr.CIFailed,
 		FailedWorkflowRunsKnown: true,
 		FailedWorkflowRuns:      1,
 	})
@@ -159,6 +174,7 @@ func TestToggleAutoRerunChecksImmediatelyWhenEligible(t *testing.T) {
 	if !got.autoRerun[key] {
 		t.Fatal("autorerun was not enabled")
 	}
+
 	if got.lastAutoCheck["rerun:"+key].IsZero() {
 		t.Fatal("expected autorerun to check immediately")
 	}
@@ -166,10 +182,10 @@ func TestToggleAutoRerunChecksImmediatelyWhenEligible(t *testing.T) {
 
 func TestToggleAutoRerunRespectsPersistedCooldown(t *testing.T) {
 	key := "org/repo#1"
-	m := testAutoToggleModel(t, PR{
+	m := testAutoToggleModel(t, pr.PR{
 		Repo:                    "org/repo",
 		Number:                  1,
-		CIStatus:                CIFailed,
+		CIStatus:                pr.CIFailed,
 		FailedWorkflowRunsKnown: true,
 		FailedWorkflowRuns:      1,
 	})
@@ -181,6 +197,7 @@ func TestToggleAutoRerunRespectsPersistedCooldown(t *testing.T) {
 	if !got.autoRerun[key] {
 		t.Fatal("autorerun was not enabled")
 	}
+
 	if !got.lastAutoCheck["rerun:"+key].IsZero() {
 		t.Fatal("autorerun should not check immediately while persisted cooldown is active")
 	}
@@ -188,7 +205,7 @@ func TestToggleAutoRerunRespectsPersistedCooldown(t *testing.T) {
 
 func TestToggleAutoDisableClearsCheckCooldown(t *testing.T) {
 	key := "org/repo#1"
-	m := testAutoToggleModel(t, PR{
+	m := testAutoToggleModel(t, pr.PR{
 		Repo:   "org/repo",
 		Number: 1,
 	})
@@ -201,6 +218,7 @@ func TestToggleAutoDisableClearsCheckCooldown(t *testing.T) {
 	if got.autoRerun[key] {
 		t.Fatal("autorerun was not disabled")
 	}
+
 	if !got.lastAutoCheck["rerun:"+key].IsZero() {
 		t.Fatal("autorerun check cooldown was not cleared")
 	}
@@ -229,22 +247,26 @@ func TestTruncateDisplayWidth(t *testing.T) {
 	}
 }
 
-func testAutoToggleModel(t *testing.T, pr PR) model {
+func testAutoToggleModel(t *testing.T, p pr.PR) model {
 	t.Helper()
 
 	return model{
-		config: Config{
+		client: fakeClient{},
+		config: config.Config{
 			DataDir:        t.TempDir(),
+			PollInterval:   2 * time.Minute,
 			AutoCooldown:   time.Hour,
 			AutoMaxRetries: 3,
 			MergeComment:   "/m",
 		},
-		prs:           []PR{pr},
-		autoMerge:     map[string]bool{},
-		autoRerun:     map[string]bool{},
-		lastAutoRerun: map[string]time.Time{},
-		mergeFailed:   map[string]bool{},
-		rerunFailed:   map[string]bool{},
-		lastAutoCheck: map[string]time.Time{},
+		prs:              []pr.PR{p},
+		autoMerge:        map[string]bool{},
+		autoRerun:        map[string]bool{},
+		lastAutoRerun:    map[string]time.Time{},
+		mergeFailed:      map[string]bool{},
+		rerunFailed:      map[string]bool{},
+		lastAutoCheck:    map[string]time.Time{},
+		rerunInFlight:    map[string]time.Time{},
+		rerunInFlightSHA: map[string]string{},
 	}
 }

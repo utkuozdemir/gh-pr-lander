@@ -1,0 +1,37 @@
+version: "3"
+
+tasks:
+  default:
+    desc: lint and test
+    cmds:
+      - task: lint
+      - task: test
+
+  fmt:
+    desc: format code and apply autofixes
+    cmds:
+      - go mod tidy
+      - go fix ./...
+      - golangci-lint run --fix ./...
+      - golangci-lint fmt ./...
+
+  lint:
+    desc: lint code
+    cmds:
+      - go mod tidy --diff
+      - golangci-lint run ./...
+
+  test:
+    desc: run unit tests
+    cmds:
+      - go test ./...
+
+  test-race:
+    desc: run unit tests with the race detector
+    cmds:
+      - go test -race ./...
+
+  build:
+    desc: build the binary
+    cmds:
+      - go build -o sidero-rebaser .
