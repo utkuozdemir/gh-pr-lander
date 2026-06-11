@@ -225,6 +225,30 @@ func TestComputeCIStatusTreatsUnfetchedChecksAsPending(t *testing.T) {
 	}
 }
 
+func TestComputeCIStatusHonorsPendingRollupState(t *testing.T) {
+	// Every fetched context passed, but the rollup aggregate still says checks
+	// are expected (a fresh commit whose required checks have not registered).
+	status, _ := computeCIStatus(prNode{
+		Commits: commitConn{Nodes: []commitNode{{
+			Commit: commitDetail{StatusCheckRollup: &statusCheckRollup{
+				State: "PENDING",
+				Contexts: contextConn{
+					TotalCount: 1,
+					Nodes: []contextNode{{
+						TypeName:   "CheckRun",
+						Status:     "COMPLETED",
+						Conclusion: "SUCCESS",
+					}},
+				},
+			}},
+		}}},
+	})
+
+	if status != pr.CIRunning {
+		t.Fatalf("expected CIRunning when rollup state is PENDING, got %v", status)
+	}
+}
+
 func graphQLPRPage(hasNext bool, cursor string, nodes ...string) string {
 	return `{"data":{"search":{"pageInfo":{"hasNextPage":` + boolJSON(
 		hasNext,

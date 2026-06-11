@@ -158,6 +158,52 @@ If you ever revisit this, an alternative/complementary heuristic is to detect a
 suspicious drop in total check count versus the previous fetch when the previous
 fetch had failures. We chose the rerun-in-flight approach because it directly
 matches the reported reproduction and is fully testable without extra API calls.
+That count-drop heuristic is exactly what issue #7 (below) ended up needing.
+
+## Issue #7: spurious "all passed" after an external rebase+push (the "checks settling" guard)
+
+**Symptom:** you rebase a behind branch and force-push it *outside* the tool,
+then refresh: the tool briefly says "1/1 passed, good to go", and only on the
+next refresh shows the real "13/14 done".
+
+**Cause:** the force-push creates a brand-new head commit, and GitHub does not
+attach all the required checks to it atomically. For a few seconds the new
+commit's `statusCheckRollup` reports a small, all-green subset (sometimes a
+single passing check) before the rest of the workflows register. The tool
+faithfully reports that snapshot → `CIPassed` → `StatusReady`. Same family as
+issue #1 (rollup transiently under-reporting), but a different trigger, and the
+issue #1 guard does **not** cover it: that guard only arms on an *in-tool*
+action, and it explicitly *clears* on a head-SHA change — which is exactly what a
+rebase+push is. So an external push is an unguarded window (and with automerge on
+could fire a spurious `/m`).
+
+**Fix (two parts):**
+
+1. **Honor the rollup's aggregate `state`** in `computeCIStatus`
+   (`internal/github/status.go`). We already fetched `statusCheckRollup.state`
+   but ignored it. When no fetched context failed/ran/pended but the aggregate
+   state is `EXPECTED`/`PENDING` (and we saw at least one context), report
+   `CIRunning` — GitHub itself is saying more checks are coming. Cheap and pure,
+   but on its own it does *not* catch the "1 registered + green, state SUCCESS"
+   instant, so it is only a secondary signal.
+
+2. **Cross-fetch check-count settling** in `internal/tui/auto.go`,
+   `applyChecksSettling` (keyed by PR via `checkBaseline`). For each PR we
+   remember the head SHA, when we first saw it, the high-water check count on it,
+   and the high-water count on the *previous* SHA. When the SHA just changed and
+   the new commit's current check count is **below** the previous commit's
+   count, the required checks have not all registered yet, so a transient
+   `CIPassed`/`CINone` is rewritten to `CIRunning` (and `OverallStatus`
+   recomputed). It relaxes once the count catches up (`prevMaxTotal <= current`)
+   or the grace (`config.RerunSettleGrace`) elapses. A *first* sighting
+   (`prevMaxTotal == 0`) is never suppressed, so a genuinely green PR shows ready
+   immediately. This is the real fix for #7 because it needs no in-tool action to
+   arm — it is the count-drop heuristic foreshadowed in the issue #1 notes.
+
+Both guards run each fetch (`applyChecksSettling(applyRerunSettling(...))`) and
+only ever push toward `CIRunning`, so they compose without fighting. Tested in
+`internal/tui/auto_test.go` (settling) and `internal/github/client_test.go`
+(rollup state), no network or timing flakiness.
 
 ## Testing
 
