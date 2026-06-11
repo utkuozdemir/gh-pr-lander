@@ -1,9 +1,18 @@
+// Command sidero-rebaser is a terminal tool for the Siderolabs PR
+// rebase-and-merge workflow. See README.md for the user-facing description and
+// CLAUDE.md for the architecture and contributor notes.
+//
+// This file is intentionally thin: it parses flags, wires the components
+// together, and runs the Bubble Tea program alongside a background poller under
+// a structured-concurrency group. All behavior lives in internal/.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -12,9 +21,87 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/utkuozdemir/sidero-rebaser/internal/config"
+	"github.com/utkuozdemir/sidero-rebaser/internal/github"
+	"github.com/utkuozdemir/sidero-rebaser/internal/notify"
+	"github.com/utkuozdemir/sidero-rebaser/internal/tui"
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatalf("failed to run: %v", err)
+	}
+}
+
+func run() error {
+	cfg, err := parseFlags()
+	if err != nil {
+		return err
+	}
+
+	logFile, err := setupLogging(cfg.DataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not set up log file: %v\n", err)
+	}
+
+	if logFile != nil {
+		defer func() { _ = logFile.Close() }()
+	}
+
+	slog.Info("starting sidero-rebaser", "orgs", cfg.Orgs, "poll_interval", cfg.PollInterval, "data_dir", cfg.DataDir)
+
+	notify.SetEnabled(cfg.Notifications)
+
+	token, err := resolveGitHubToken()
+	if err != nil {
+		return err
+	}
+
+	client := github.New(token)
+
+	userCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := client.ResolveUsername(userCtx); err != nil {
+		cancel()
+
+		return fmt.Errorf("could not resolve GitHub username: %w", err)
+	}
+
+	cancel()
+
+	// The poller fetches PRs in the background and streams results to the TUI;
+	// the TUI can ask it to refresh immediately after an action.
+	poller := github.NewPoller(client, cfg.Orgs, cfg.PollInterval)
+
+	ctx, cancelPoller := context.WithCancel(context.Background())
+	defer cancelPoller()
+
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		return poller.Run(gctx)
+	})
+
+	m := tui.NewModel(cfg, client, poller.Results(), poller.Refresh)
+	p := tea.NewProgram(m, tea.WithAltScreen())
+
+	_, runErr := p.Run()
+
+	// Stop the poller and wait for it to exit (structured concurrency).
+	cancelPoller()
+
+	if werr := g.Wait(); werr != nil && !errors.Is(werr, context.Canceled) {
+		slog.Error("poller stopped with error", "error", werr)
+	}
+
+	if runErr != nil {
+		return runErr
+	}
+
+	return nil
+}
+
+func parseFlags() (config.Config, error) {
 	home, _ := os.UserHomeDir()
 	defaultDataDir := filepath.Join(home, ".sidero-rebaser")
 
@@ -46,29 +133,33 @@ func main() {
 	if pollInterval < 10*time.Second {
 		pollInterval = 10 * time.Second
 	}
+
 	if autoMaxRetries < 1 {
 		autoMaxRetries = 1
 	}
+
 	if autoCooldown < 0 {
 		autoCooldown = 0
 	}
+
 	if rebaseCountdown < 0 {
 		rebaseCountdown = 0
 	}
 
 	var parsedOrgs []string
+
 	for o := range strings.SplitSeq(orgs, ",") {
 		o = strings.TrimSpace(o)
 		if o != "" {
 			parsedOrgs = append(parsedOrgs, o)
 		}
 	}
+
 	if len(parsedOrgs) == 0 {
-		fmt.Fprintln(os.Stderr, "error: no orgs specified")
-		os.Exit(1)
+		return config.Config{}, errors.New("no orgs specified")
 	}
 
-	cfg := Config{
+	return config.Config{
 		Orgs:                  parsedOrgs,
 		PollInterval:          pollInterval,
 		DataDir:               dataDir,
@@ -79,43 +170,7 @@ func main() {
 		RebaseCountdown:       rebaseCountdown,
 		MergedDisplayDuration: mergedDisplayDuration,
 		DeleteMergedBranches:  deleteMergedBranches,
-	}
-
-	logFile, err := setupLogging(cfg.DataDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not set up log file: %v\n", err)
-	}
-	if logFile != nil {
-		defer func() { _ = logFile.Close() }()
-	}
-
-	slog.Info("starting sidero-rebaser", "orgs", cfg.Orgs, "poll_interval", cfg.PollInterval, "data_dir", cfg.DataDir)
-
-	token, err := resolveGitHubToken()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
-	notificationsEnabled = cfg.Notifications
-
-	client := newGitHubClient(token)
-
-	userCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	if err := client.resolveUsername(userCtx); err != nil {
-		cancel()
-		fmt.Fprintf(os.Stderr, "error: could not resolve GitHub username: %v\n", err)
-		os.Exit(1)
-	}
-	cancel()
-
-	m := newModel(cfg, client)
-	p := tea.NewProgram(m, tea.WithAltScreen())
-
-	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
+	}, nil
 }
 
 func setupLogging(dataDir string) (*os.File, error) {
@@ -124,6 +179,7 @@ func setupLogging(dataDir string) (*os.File, error) {
 	}
 
 	logPath := filepath.Join(dataDir, "sidero-rebaser.log")
+
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
@@ -139,11 +195,15 @@ func resolveGitHubToken() (string, error) {
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		return token, nil
 	}
+
 	if token := os.Getenv("GH_TOKEN"); token != "" {
 		return token, nil
 	}
 
-	out, err := exec.Command("gh", "auth", "token").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "gh", "auth", "token").Output()
 	if err == nil {
 		token := strings.TrimSpace(string(out))
 		if token != "" {
@@ -151,5 +211,7 @@ func resolveGitHubToken() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("no GitHub token found. set GITHUB_TOKEN, GH_TOKEN, or install gh CLI and run 'gh auth login'")
+	return "", errors.New(
+		"no GitHub token found. set GITHUB_TOKEN, GH_TOKEN, or install gh CLI and run 'gh auth login'",
+	)
 }

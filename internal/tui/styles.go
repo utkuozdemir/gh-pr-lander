@@ -1,9 +1,13 @@
-package main
+package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+)
 
 var (
-	// Base colors
+	// Base colors.
 	colorGreen   = lipgloss.Color("#22c55e")
 	colorYellow  = lipgloss.Color("#eab308")
 	colorRed     = lipgloss.Color("#ef4444")
@@ -15,7 +19,7 @@ var (
 	colorDim     = lipgloss.Color("#4b5563")
 	colorWhite   = lipgloss.Color("#f9fafb")
 
-	// Header
+	// Header.
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(colorWhite).
@@ -24,7 +28,7 @@ var (
 	headerInfoStyle = lipgloss.NewStyle().
 			Foreground(colorGray)
 
-	// PR item
+	// PR item.
 	selectedStyle = lipgloss.NewStyle().
 			PaddingLeft(1).
 			BorderLeft(true).
@@ -43,7 +47,7 @@ var (
 	prDescStyle = lipgloss.NewStyle().
 			Foreground(colorDim)
 
-	// Status badges
+	// Status badges.
 	badgeReady = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(colorGreen)
@@ -80,7 +84,7 @@ var (
 			Bold(true).
 			Foreground(colorPurple)
 
-	// Indicators
+	// Indicators.
 	indicatorPass    = lipgloss.NewStyle().Foreground(colorGreen)
 	indicatorWarn    = lipgloss.NewStyle().Foreground(colorYellow)
 	indicatorFail    = lipgloss.NewStyle().Foreground(colorRed)
@@ -88,7 +92,7 @@ var (
 	indicatorNone    = lipgloss.NewStyle().Foreground(colorGray)
 	indicatorAuto    = lipgloss.NewStyle().Foreground(colorOrange)
 
-	// Footer
+	// Footer.
 	footerStyle = lipgloss.NewStyle().
 			Foreground(colorGray).
 			PaddingLeft(1)
@@ -97,73 +101,72 @@ var (
 			Bold(true).
 			Foreground(colorWhite)
 
-	// Messages
+	// Messages.
 	successStyle = lipgloss.NewStyle().
 			Foreground(colorGreen)
 
 	errorStyle = lipgloss.NewStyle().
 			Foreground(colorRed)
-
 )
 
-func statusBadge(status OverallStatus) string {
+func statusBadge(status pr.OverallStatus) string {
 	switch status {
-	case StatusReady:
+	case pr.StatusReady:
 		return badgeReady.Render("READY")
-	case StatusStale:
+	case pr.StatusStale:
 		return badgeStale.Render("STALE")
-	case StatusPending:
+	case pr.StatusPending:
 		return badgePending.Render("PENDING")
-	case StatusFailed:
+	case pr.StatusFailed:
 		return badgeFailed.Render("FAILED")
-	case StatusBlocked:
+	case pr.StatusBlocked:
 		return badgeBlocked.Render("BLOCKED")
-	case StatusDraft:
+	case pr.StatusDraft:
 		return badgeDraft.Render("DRAFT")
 	default:
 		return ""
 	}
 }
 
-func baseIndicator(status BaseStatus) string {
+func baseIndicator(status pr.BaseStatus) string {
 	switch status {
-	case BaseSynced:
+	case pr.BaseSynced:
 		return indicatorPass.Render("✓ synced")
-	case BaseBehind:
+	case pr.BaseBehind:
 		return indicatorWarn.Render("↻ behind")
-	case BaseConflict:
+	case pr.BaseConflict:
 		return indicatorFail.Render("✗ conflict")
-	case BaseUnknown:
+	case pr.BaseUnknown:
 		return indicatorNone.Render("? checking")
 	default:
 		return ""
 	}
 }
 
-func ciIndicator(status CIStatus, checks CheckSummary) string {
+func ciIndicator(status pr.CIStatus, checks pr.CheckSummary) string {
 	switch status {
-	case CIPassed:
+	case pr.CIPassed:
 		return indicatorPass.Render("✓ " + checks.String())
-	case CIRunning:
+	case pr.CIRunning:
 		return indicatorRunning.Render("● " + checks.String())
-	case CIFailed:
+	case pr.CIFailed:
 		return indicatorFail.Render("✗ " + checks.String())
-	case CINone:
+	case pr.CINone:
 		return indicatorNone.Render("— no checks")
 	default:
 		return ""
 	}
 }
 
-func reviewIndicator(status ReviewStatus) string {
+func reviewIndicator(status pr.ReviewStatus) string {
 	switch status {
-	case ReviewApproved:
+	case pr.ReviewApproved:
 		return indicatorPass.Render("✓ approved")
-	case ReviewChangesRequested:
+	case pr.ReviewChangesRequested:
 		return indicatorFail.Render("✗ changes requested")
-	case ReviewPending:
+	case pr.ReviewPending:
 		return indicatorWarn.Render("◯ pending")
-	case ReviewNone:
+	case pr.ReviewNone:
 		return indicatorNone.Render("— none")
 	default:
 		return ""
