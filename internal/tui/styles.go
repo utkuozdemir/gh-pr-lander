@@ -8,16 +8,15 @@ import (
 
 var (
 	// Base colors.
-	colorGreen   = lipgloss.Color("#22c55e")
-	colorYellow  = lipgloss.Color("#eab308")
-	colorRed     = lipgloss.Color("#ef4444")
-	colorCyan    = lipgloss.Color("#06b6d4")
-	colorMagenta = lipgloss.Color("#a855f7")
-	colorPurple  = lipgloss.Color("#8b5cf6")
-	colorOrange  = lipgloss.Color("#f97316")
-	colorGray    = lipgloss.Color("#6b7280")
-	colorDim     = lipgloss.Color("#4b5563")
-	colorWhite   = lipgloss.Color("#f9fafb")
+	colorGreen  = lipgloss.Color("#22c55e")
+	colorYellow = lipgloss.Color("#eab308")
+	colorRed    = lipgloss.Color("#ef4444")
+	colorCyan   = lipgloss.Color("#06b6d4")
+	colorPurple = lipgloss.Color("#8b5cf6")
+	colorOrange = lipgloss.Color("#f97316")
+	colorGray   = lipgloss.Color("#6b7280")
+	colorDim    = lipgloss.Color("#4b5563")
+	colorWhite  = lipgloss.Color("#f9fafb")
 
 	// Header.
 	headerStyle = lipgloss.NewStyle().
@@ -60,9 +59,13 @@ var (
 			Bold(true).
 			Foreground(colorCyan)
 
+	// FAILED (CI failed) and BLOCKED (conflicts / changes requested) are both
+	// red: they are terminal "needs action" states, distinguished by their
+	// label. Red deliberately stays out of the purple family, which is reserved
+	// for MERGED, so a failed PR can never be mistaken for a merged one.
 	badgeFailed = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(colorMagenta)
+			Foreground(colorRed)
 
 	badgeBlocked = lipgloss.NewStyle().
 			Bold(true).

@@ -40,7 +40,7 @@ Or `go run .` from source. All settings have defaults, `--help` for the full lis
 
 ```
 --orgs                      comma-separated GitHub orgs (default: siderolabs,cosi-project)
---interval                  poll interval (default: 2m, minimum: 10s)
+--interval                  poll interval when idle (default: 2m, minimum: 10s); polls faster automatically while CI is running
 --data-dir                  data directory (default: ~/.sidero-rebaser)
 --merge-comment             comment to post when merging (default: /m)
 --auto-max-retries          max auto attempts before giving up (default: 3)
