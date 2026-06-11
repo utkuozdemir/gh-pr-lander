@@ -73,7 +73,23 @@ type model struct {
 	rerunInFlight    map[string]time.Time
 	rerunInFlightSHA map[string]string
 
+	// checkBaseline guards against GitHub momentarily reporting an incomplete,
+	// all-green check set right after an external rebase+push, before the new
+	// commit's required checks have registered (issue #7). Keyed by PR.
+	checkBaseline map[string]checkBaseline
+
 	quitting bool
+}
+
+// checkBaseline remembers, per PR, the head SHA we last saw, when we first saw
+// it, the high-water check count observed on it, and the high-water count on the
+// SHA before it. A new commit whose current check count is below the previous
+// commit's count is still settling.
+type checkBaseline struct {
+	sha          string
+	firstSeen    time.Time
+	maxTotal     int
+	prevMaxTotal int
 }
 
 // NewModel builds the initial TUI model. results/refresh come from a
@@ -110,6 +126,7 @@ func NewModel(cfg config.Config, client Client, results <-chan github.FetchResul
 		recentlyMerged:   make(map[string]*mergedPR),
 		rerunInFlight:    make(map[string]time.Time),
 		rerunInFlightSHA: make(map[string]string),
+		checkBaseline:    make(map[string]checkBaseline),
 	}
 }
 
@@ -207,7 +224,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.err = nil
 		m.prevPRs = m.prs
-		m.prs = m.applyRerunSettling(msg.prs)
+		m.prs = m.applyChecksSettling(m.applyRerunSettling(msg.prs))
 		m.lastFetch = time.Now()
 
 		m.checkTransitions()

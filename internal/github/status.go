@@ -140,6 +140,18 @@ func computeCIStatus(node prNode) (pr.CIStatus, pr.CheckSummary) {
 		return pr.CIRunning, summary
 	}
 
+	// GitHub's rollup can still report that checks are expected or pending in
+	// aggregate even when every context we fetched looks passed — typically
+	// right after a push, before all required checks have registered on the new
+	// commit. Trust that aggregate signal over an incomplete context list so we
+	// do not flip to "passed" during the gap.
+	switch strings.ToUpper(commit.StatusCheckRollup.State) {
+	case "EXPECTED", "PENDING":
+		if summary.Total > 0 {
+			return pr.CIRunning, summary
+		}
+	}
+
 	if summary.Passed > 0 {
 		return pr.CIPassed, summary
 	}

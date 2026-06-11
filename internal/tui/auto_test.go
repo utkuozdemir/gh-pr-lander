@@ -124,3 +124,93 @@ func TestMarkRerunInFlightViaRerunMessage(t *testing.T) {
 		t.Fatal("a successful manual re-run should mark the PR in flight")
 	}
 }
+
+// Checks settling (issue #7): an external rebase+push makes GitHub briefly
+// report a small, all-green check set on the new commit before all its required
+// checks register. The PR must not be treated as ready during that window.
+
+func checksSettlingModel() model {
+	return model{
+		config:        config.Config{PollInterval: 2 * time.Minute},
+		autoMerge:     map[string]bool{"org/repo#1": true},
+		mergeFailed:   map[string]bool{},
+		lastAutoCheck: map[string]time.Time{},
+		checkBaseline: map[string]checkBaseline{},
+	}
+}
+
+// checkedPR is a ready PR carrying a given total number of (passed) checks.
+func checkedPR(sha string, total int) pr.PR {
+	p := readyPR(sha)
+	p.Checks = pr.CheckSummary{Total: total, Passed: total}
+
+	return p
+}
+
+func TestApplyChecksSettlingSuppressesPostPushUnderreport(t *testing.T) {
+	m := checksSettlingModel()
+	// Baseline: the previous commit had a full set of green checks.
+	m.applyChecksSettling([]pr.PR{checkedPR("sha1", 14)})
+
+	// Rebase+push: the new commit transiently reports a single passing check.
+	got := m.applyChecksSettling([]pr.PR{checkedPR("sha2", 1)})
+
+	if got[0].CIStatus != pr.CIRunning {
+		t.Fatalf("expected CIRunning while the new commit's checks register, got %v", got[0].CIStatus)
+	}
+
+	if got[0].OverallStatus == pr.StatusReady {
+		t.Fatal("PR must not be READY while its post-push checks are settling")
+	}
+}
+
+func TestApplyChecksSettlingClearsWhenChecksCatchUp(t *testing.T) {
+	m := checksSettlingModel()
+	m.applyChecksSettling([]pr.PR{checkedPR("sha1", 14)})
+	m.applyChecksSettling([]pr.PR{checkedPR("sha2", 1)}) // suppressed
+
+	got := m.applyChecksSettling([]pr.PR{checkedPR("sha2", 14)}) // fully re-registered
+
+	if got[0].CIStatus != pr.CIPassed {
+		t.Fatalf("expected CIPassed once all checks re-registered, got %v", got[0].CIStatus)
+	}
+}
+
+func TestApplyChecksSettlingIgnoresFirstSighting(t *testing.T) {
+	m := checksSettlingModel()
+
+	// No prior baseline, so a small green set is trusted (a genuinely green PR
+	// on first load must show as ready).
+	got := m.applyChecksSettling([]pr.PR{checkedPR("sha1", 1)})
+
+	if got[0].CIStatus != pr.CIPassed {
+		t.Fatalf("a first sighting must be trusted, got %v", got[0].CIStatus)
+	}
+}
+
+func TestApplyChecksSettlingClearsAfterGrace(t *testing.T) {
+	m := checksSettlingModel()
+	m.applyChecksSettling([]pr.PR{checkedPR("sha1", 14)})
+	m.applyChecksSettling([]pr.PR{checkedPR("sha2", 1)})
+
+	// Age the new commit's first-seen time beyond the grace window.
+	bl := m.checkBaseline["org/repo#1"]
+	bl.firstSeen = time.Now().Add(-m.config.RerunSettleGrace() - time.Second)
+	m.checkBaseline["org/repo#1"] = bl
+
+	got := m.applyChecksSettling([]pr.PR{checkedPR("sha2", 1)})
+
+	if got[0].CIStatus != pr.CIPassed {
+		t.Fatalf("after the grace window the reading must be trusted, got %v", got[0].CIStatus)
+	}
+}
+
+func TestApplyChecksSettlingBlocksSpuriousAutomerge(t *testing.T) {
+	m := checksSettlingModel()
+	m.applyChecksSettling([]pr.PR{checkedPR("sha1", 14)})
+	prs := m.applyChecksSettling([]pr.PR{checkedPR("sha2", 1)})
+
+	if m.shouldAutoMerge(prs[0]) {
+		t.Fatal("automerge must not fire while the post-push checks are settling")
+	}
+}
