@@ -90,6 +90,33 @@ instead of waiting for the interval. `Refresh()` is non-blocking and coalesces
 (`delayedRefreshCmd`) cover GitHub's own propagation lag (e.g. the `/m` bot
 taking a moment to merge).
 
+### Responsiveness: adaptive polling (issue #5)
+
+**Why not push?** Issue #5 asked whether GitHub can *push* events (websocket/SSE)
+so we react the instant CI passes instead of polling. The answer, after
+investigation, is **no usable mechanism exists for a local CLI**:
+
+- **Webhooks** push events but need a public HTTP endpoint. A laptop tool has
+  none, and tunnels (smee.io, ngrok) are fragile and heavyweight for personal
+  use.
+- There is **no documented websocket/SSE event stream** in the REST or GraphQL
+  API. The web UI's `wss://alive.github.com` is undocumented, uses session-cookie
+  auth, and won't work with a PAT — don't rely on it.
+- The **Notifications API** is itself polling (it returns an `X-Poll-Interval`
+  header telling you how often to poll). No win.
+
+So polling is the only option. What we *can* do is **poll adaptively**:
+`Poller.nextInterval` shortens the next tick while any watched PR is
+*transitional* (`anyTransitional`: CI running, or base/mergeability unknown), so
+a CI pass/fail is caught within seconds, and relaxes back to the configured
+interval when everything is idle. The fast cadence is a quarter of the
+configured interval, floored at `minActiveInterval` (15s) so we don't burn rate
+limit and capped so it's never slower than the normal interval. On a fetch error
+`prs` is nil → normal interval, so an outage backs off instead of fast-spinning.
+Polling is inherently retry-resilient: each cycle is independent, a failed fetch
+just streams an error and the next cycle tries again. Tested purely via
+`nextInterval`/`anyTransitional` (no timing-based flakiness).
+
 ### Structured concurrency (required)
 
 Goroutines use structured concurrency — never fire-and-forget. The poller is run

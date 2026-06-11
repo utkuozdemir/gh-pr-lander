@@ -55,6 +55,41 @@ func TestPollerFetchesImmediatelyThenOnRefresh(t *testing.T) {
 	}
 }
 
+func TestNextIntervalIsAdaptive(t *testing.T) {
+	p := NewPoller(&fakeFetcher{}, []string{"org"}, 2*time.Minute)
+
+	idle := []pr.PR{{CIStatus: pr.CIPassed, BaseStatus: pr.BaseSynced}}
+	if got := p.nextInterval(idle); got != 2*time.Minute {
+		t.Fatalf("idle PRs should poll at the configured interval, got %s", got)
+	}
+
+	// nil (e.g. after a fetch error) also relaxes to the configured interval.
+	if got := p.nextInterval(nil); got != 2*time.Minute {
+		t.Fatalf("nil PRs should poll at the configured interval, got %s", got)
+	}
+
+	for _, active := range []pr.PR{
+		{CIStatus: pr.CIRunning, BaseStatus: pr.BaseSynced},
+		{CIStatus: pr.CIPassed, BaseStatus: pr.BaseUnknown},
+	} {
+		got := p.nextInterval([]pr.PR{active})
+		if got != 30*time.Second { // quarter of 2m, above the 15s floor
+			t.Fatalf("transitional PR should poll fast, got %s", got)
+		}
+	}
+}
+
+func TestNextIntervalRespectsFloorAndCap(t *testing.T) {
+	// A short configured interval: the fast cadence is floored at
+	// minActiveInterval but never exceeds the configured interval.
+	p := NewPoller(&fakeFetcher{}, []string{"org"}, 10*time.Second)
+
+	active := []pr.PR{{CIStatus: pr.CIRunning}}
+	if got := p.nextInterval(active); got != 10*time.Second {
+		t.Fatalf("fast cadence must not exceed the configured interval, got %s", got)
+	}
+}
+
 func TestPollerStopsOnContextCancel(t *testing.T) {
 	fetcher := &fakeFetcher{}
 	p := NewPoller(fetcher, []string{"org"}, time.Hour)
