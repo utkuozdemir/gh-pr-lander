@@ -167,6 +167,3 @@ Temporary Items
 # End of https://www.toptal.com/developers/gitignore/api/macos,visualstudiocode,jetbrains+all,go
 
 sidero-rebaser
-
-# include CLAUDE.md for this repo
-!CLAUDE.md

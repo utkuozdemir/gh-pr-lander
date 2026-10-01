@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -65,6 +64,15 @@ func (m model) cleanupAuto() model {
 		}
 	}
 
+	for key := range m.autoRebase {
+		if !openPRs[key] && m.isConfirmedGone(key) {
+			delete(m.autoRebase, key)
+			delete(m.rebaseState, key)
+
+			changed = true
+		}
+	}
+
 	for key := range m.autoRerun {
 		if !openPRs[key] && m.isConfirmedGone(key) {
 			delete(m.autoRerun, key)
@@ -91,7 +99,8 @@ func (m model) isConfirmedGone(key string) bool {
 }
 
 // checkTransitions fires desktop notifications for meaningful status changes
-// between the previous and current fetch.
+// between the previous and current fetch. A change that automation on the PR
+// is about to handle stays quiet: only automation's outcome notifies.
 func (m model) checkTransitions() {
 	if len(m.prevPRs) == 0 {
 		return
@@ -108,19 +117,32 @@ func (m model) checkTransitions() {
 			continue
 		}
 
+		key := p.RepoShort()
+		body := key + " — " + p.Title
+		_, autoRebase := m.autoRebase[key]
+
 		if prev.OverallStatus != pr.StatusReady && p.OverallStatus == pr.StatusReady {
-			slog.Info("PR became ready to merge", "pr", p.RepoShort())
-			notify.Send("Ready to merge", fmt.Sprintf("%s — %s", p.RepoShort(), p.Title))
+			slog.Info("PR became ready to merge", "pr", key)
+
+			if !m.autoMerge[key] || m.mergeFailed[key] {
+				notify.Send(notify.ReadyToMerge, body)
+			}
 		}
 
 		if prev.CIStatus != pr.CIFailed && p.CIStatus == pr.CIFailed {
-			slog.Info("checks failed", "pr", p.RepoShort())
-			notify.Send("Checks failed", fmt.Sprintf("%s — %s", p.RepoShort(), p.Title))
+			slog.Info("checks failed", "pr", key)
+
+			if !m.autorerunWillHandle(p) {
+				notify.Send(notify.ChecksFailed, body)
+			}
 		}
 
 		if prev.BaseStatus == pr.BaseSynced && p.BaseStatus == pr.BaseBehind {
-			slog.Info("PR became stale", "pr", p.RepoShort())
-			notify.Send("PR needs rebase", fmt.Sprintf("%s — %s", p.RepoShort(), p.Title))
+			slog.Info("PR became stale", "pr", key)
+
+			if !autoRebase {
+				notify.Send(notify.NeedsRebase, body)
+			}
 		}
 	}
 }

@@ -122,7 +122,8 @@ func (c *Client) graphql(ctx context.Context, query string, variables map[string
 	return json.Unmarshal(respBody, result)
 }
 
-// FetchPRs returns the authenticated user's open PRs across the given orgs.
+// FetchPRs returns the authenticated user's open PRs across the given orgs,
+// including PRs opened by others that the user has authored or committed to.
 // Orgs are queried in parallel; a PR that appears under multiple orgs is
 // de-duplicated by its repo#number key.
 func (c *Client) FetchPRs(ctx context.Context, orgs []string) ([]pr.PR, error) {
@@ -169,7 +170,9 @@ func (c *Client) FetchPRs(ctx context.Context, orgs []string) ([]pr.PR, error) {
 }
 
 func (c *Client) fetchPRsForOrg(ctx context.Context, org string) ([]pr.PR, error) {
-	searchQuery := "is:pr is:open author:@me org:" + org
+	// involves:@me also matches PRs the user only commented on or was mentioned
+	// in. It is just a cheap candidate set, filtered down by touchedBy below.
+	searchQuery := "is:pr is:open involves:@me org:" + org
 
 	var (
 		prs   []pr.PR
@@ -197,11 +200,16 @@ func (c *Client) fetchPRsForOrg(ctx context.Context, org string) ([]pr.PR, error
 		}
 
 		for _, node := range resp.Data.Search.Nodes {
-			if node.Repository.IsArchived {
+			if node.Repository.IsArchived || !touchedBy(node, c.username) {
 				continue
 			}
 
-			prs = append(prs, prFromNode(node))
+			p := prFromNode(node)
+			if !strings.EqualFold(node.Author.Login, c.username) {
+				p.TakenOverFrom = node.Author.Login
+			}
+
+			prs = append(prs, p)
 		}
 
 		page := resp.Data.Search.PageInfo
@@ -240,6 +248,7 @@ func (c *Client) annotateFailedWorkflowRuns(ctx context.Context, prs []pr.PR) er
 			prs[i].FailedWorkflowRuns = summary.Count
 			prs[i].MaxFailedRunAttempt = summary.MaxAttempt
 			prs[i].LatestFailedRunUpdate = summary.LatestUpdatedAt
+			prs[i].RunningWorkflowRuns = summary.Running
 
 			return nil
 		})
@@ -398,6 +407,10 @@ func (c *Client) FailedWorkflowRunsSummary(
 	var summary WorkflowSummary
 
 	for _, run := range runs {
+		if run.Status != "completed" {
+			summary.Running++
+		}
+
 		if isFailedWorkflowConclusion(run.Conclusion) {
 			summary.Count++
 			if run.RunAttempt > summary.MaxAttempt {

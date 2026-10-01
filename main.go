@@ -1,6 +1,6 @@
 // Command sidero-rebaser is a terminal tool for the Siderolabs PR
 // rebase-and-merge workflow. See README.md for the user-facing description and
-// CLAUDE.md for the architecture and contributor notes.
+// AGENTS.md for the architecture and contributor notes.
 //
 // This file is intentionally thin: it parses flags, wires the components
 // together, and runs the Bubble Tea program alongside a background poller under

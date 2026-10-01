@@ -65,6 +65,10 @@ type model struct {
 	lastAutoCheck  map[string]time.Time // cooldown gate to avoid API spam
 	recentlyMerged map[string]*mergedPR // PRs that disappeared (merged/closed)
 
+	autoRebase  map[string]int             // queue order, persisted in db.yaml
+	rebaseState map[string]autoRebaseState // attempts and guards, in-memory
+	rebasing    string                     // PR with a background rebase running
+
 	// rerunInFlight guards against GitHub momentarily reporting "all checks
 	// passed" right after a re-run is triggered (issue #1). While a PR is in
 	// flight, a transient passed state is treated as still-running so automerge
@@ -120,6 +124,8 @@ func NewModel(cfg config.Config, client Client, results <-chan github.FetchResul
 		autoMerge:        db.AutoMerge,
 		autoRerun:        db.AutoRerun,
 		lastAutoRerun:    db.AutoRerunLast,
+		autoRebase:       db.AutoRebase,
+		rebaseState:      make(map[string]autoRebaseState),
 		mergeFailed:      make(map[string]bool),
 		rerunFailed:      make(map[string]bool),
 		lastAutoCheck:    make(map[string]time.Time),
@@ -238,6 +244,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		cmds = append(cmds, m.autoCmds()...)
+		cmds = append(cmds, m.autoRebaseCmd())
 		cmds = append(cmds, deleteCmds...)
 
 		return m, tea.Batch(cmds...)
@@ -279,6 +286,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(clearStatusCmd(), delayedRefreshCmd(15*time.Second))
 
 	case rebaseFinishedMsg:
+		m.rebasing = ""
+
 		if msg.err != nil {
 			slog.Error("rebase failed", "error", msg.err)
 			m.status = errorStyle.Render("✗ Rebase failed: " + msg.err.Error())
@@ -297,6 +306,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case autoRerunResultMsg:
 		return m.handleAutoRerunResult(msg)
+
+	case autoRebaseResultMsg:
+		return m.handleAutoRebaseResult(msg)
 
 	case mergedCheckMsg:
 		return m.handleMergedCheck(msg)
@@ -358,6 +370,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleAuto(m.autoMerge, m.mergeFailed, "automerge")
 	case "A":
 		return m.toggleAuto(m.autoRerun, m.rerunFailed, "autorerun")
+	case "b":
+		return m.toggleAutoRebase()
+	case "K":
+		return m.moveInQueue(-1)
+	case "J":
+		return m.moveInQueue(1)
 	case "o", "enter":
 		return m.openInBrowser()
 	case "R", "ctrl+r":
@@ -401,6 +419,13 @@ func (m model) doRebase() (tea.Model, tea.Cmd) {
 		return m, clearStatusCmd()
 	}
 
+	// Both would use the same clone under the data dir.
+	if m.rebasing != "" {
+		m.status = indicatorWarn.Render("⚠ Autorebase of " + m.rebasing + " is running, try again when it finishes")
+
+		return m, clearStatusCmd()
+	}
+
 	script, err := git.BuildRebaseScript(m.config.DataDir, item.pr, m.config.RebaseCountdown)
 	if err != nil {
 		m.status = errorStyle.Render("✗ " + err.Error())
@@ -410,7 +435,10 @@ func (m model) doRebase() (tea.Model, tea.Cmd) {
 
 	// Run interactively in the foreground via tea.ExecProcess so the user can
 	// answer YubiKey prompts. The script is built internally from API data.
+	// Reserve the clone right away: the exec runs only once Bubble Tea gets to
+	// it, and a poll result handled before that must not start an autorebase.
 	cmd := exec.CommandContext(context.Background(), "bash", "-c", script)
+	m.rebasing = item.pr.RepoShort()
 
 	return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return rebaseFinishedMsg{err: err}
@@ -430,6 +458,15 @@ func (m model) doRerunChecks() (tea.Model, tea.Cmd) {
 	}
 
 	if item.pr.FailedWorkflowRunsKnown && item.pr.FailedWorkflowRuns == 0 {
+		if item.pr.RunningWorkflowRuns > 0 {
+			m.status = indicatorWarn.Render(
+				"⚠ A workflow is still running. If the failure is in it, failed jobs can be re-run " +
+					"once it finishes (or press A for autorerun)",
+			)
+
+			return m, clearStatusCmd()
+		}
+
 		m.status = errorStyle.Render("✗ No failed GitHub Actions jobs to re-run")
 
 		return m, clearStatusCmd()
@@ -510,6 +547,7 @@ func (m model) saveDB() error {
 		AutoMerge:     m.autoMerge,
 		AutoRerun:     m.autoRerun,
 		AutoRerunLast: m.lastAutoRerun,
+		AutoRebase:    m.autoRebase,
 	})
 }
 
@@ -526,10 +564,11 @@ func (m model) handleAutoMergeResult(msg autoMergeResultMsg) (tea.Model, tea.Cmd
 				m.config.AutoMaxRetries,
 			),
 		)
-		notify.Send("Automerge failed", msg.prKey+" — giving up")
+		notify.Send(notify.AutomergeGaveUp, msg.prKey+" — "+m.config.MergeComment+" did not merge it")
 	case msg.posted:
 		slog.Info("automerge posted merge comment", "pr", msg.prKey)
 		m.status = successStyle.Render(fmt.Sprintf("⚡ Automerge: posted %s on %s", m.config.MergeComment, msg.prKey))
+		notify.Send(notify.MergePosted, msg.prKey)
 		m.triggerRefresh()
 
 		return m, tea.Batch(
@@ -552,7 +591,7 @@ func (m model) handleAutoRerunResult(msg autoRerunResultMsg) (tea.Model, tea.Cmd
 		m.status = errorStyle.Render(
 			fmt.Sprintf("⚡ %s: re-ran %d times, still failing — giving up", msg.prKey, m.config.AutoMaxRetries),
 		)
-		notify.Send("Autorerun failed", msg.prKey+" — giving up")
+		notify.Send(notify.AutorerunGaveUp, msg.prKey+" — still failing")
 	case msg.reran:
 		slog.Info("autorerun triggered", "pr", msg.prKey)
 
@@ -583,32 +622,45 @@ func (m model) handleAutoRerunResult(msg autoRerunResultMsg) (tea.Model, tea.Cmd
 	return m, clearStatusCmd()
 }
 
+// confirmGone records the API-confirmed outcome of a PR that left the list and
+// notifies about it.
+func (m model) confirmGone(key string, merged bool) {
+	mp := m.recentlyMerged[key]
+	if mp == nil {
+		return
+	}
+
+	mp.Confirmed = true
+	mp.Merged = merged
+
+	event := notify.Closed
+	if merged {
+		event = notify.Merged
+	}
+
+	notify.Send(event, key+" — "+mp.PR.Title)
+}
+
 func (m model) handleMergedCheck(msg mergedCheckMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case msg.err != nil:
 		slog.Error("merged PR check/cleanup error", "pr", msg.prKey, "error", msg.err)
+
+		// Only the branch cleanup failed, the merge itself is confirmed.
+		if msg.merged {
+			m.confirmGone(msg.prKey, true)
+		}
 	case msg.open:
 		delete(m.recentlyMerged, msg.prKey)
 		slog.Info("PR is still open, keeping it out of merged/closed list", "pr", msg.prKey)
 	case msg.deleted:
-		if mp := m.recentlyMerged[msg.prKey]; mp != nil {
-			mp.Confirmed = true
-			mp.Merged = true
-		}
-
+		m.confirmGone(msg.prKey, true)
 		slog.Info("deleted merged branch", "pr", msg.prKey, "branch", msg.branch)
 	case !msg.merged:
-		if mp := m.recentlyMerged[msg.prKey]; mp != nil {
-			mp.Confirmed = true
-			mp.Merged = false
-		}
-
+		m.confirmGone(msg.prKey, false)
 		slog.Info("PR closed without merge", "pr", msg.prKey)
 	default:
-		if mp := m.recentlyMerged[msg.prKey]; mp != nil {
-			mp.Confirmed = true
-			mp.Merged = true
-		}
+		m.confirmGone(msg.prKey, true)
 	}
 
 	return m, nil

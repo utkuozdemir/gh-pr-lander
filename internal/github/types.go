@@ -39,10 +39,13 @@ type prNode struct {
 	Mergeable        string     `json:"mergeable"`
 	MergeStateStatus string     `json:"mergeStateStatus"`
 	ReviewDecision   string     `json:"reviewDecision"`
+	Author           authorNode `json:"author"`
 	Repository       repoNode   `json:"repository"`
 	HeadRef          refNode    `json:"headRef"`
 	Commits          commitConn `json:"commits"`
+	AllCommits       commitConn `json:"allCommits"`
 	Reviews          reviewConn `json:"reviews"`
+	ReviewThreads    threadConn `json:"reviewThreads"`
 	HeadRepository   *repoNode  `json:"headRepository"`
 }
 
@@ -77,6 +80,14 @@ type commitNode struct {
 type commitDetail struct {
 	OID               string             `json:"oid"`
 	StatusCheckRollup *statusCheckRollup `json:"statusCheckRollup"`
+	Author            gitActor           `json:"author"`
+	Committer         gitActor           `json:"committer"`
+}
+
+// gitActor is a commit author or committer. User is nil when the commit email
+// is not linked to a GitHub account.
+type gitActor struct {
+	User *authorNode `json:"user"`
 }
 
 type statusCheckRollup struct {
@@ -107,6 +118,15 @@ type reviewNode struct {
 	Author authorNode `json:"author"`
 }
 
+type threadConn struct {
+	TotalCount int          `json:"totalCount"`
+	Nodes      []threadNode `json:"nodes"`
+}
+
+type threadNode struct {
+	IsResolved bool `json:"isResolved"`
+}
+
 type authorNode struct {
 	Login string `json:"login"`
 }
@@ -116,6 +136,10 @@ type WorkflowSummary struct {
 	Count           int
 	MaxAttempt      int
 	LatestUpdatedAt time.Time
+	// Running counts runs that have not completed yet. A run with a failed job
+	// has no conclusion until all its other jobs finish, and only then can its
+	// failed jobs be re-run.
+	Running int
 }
 
 // PRState is the merge state of a PR, read from the REST API.
@@ -141,7 +165,7 @@ type issueComment struct {
 }
 
 const prQuery = `query($query: String!, $after: String) {
-  search(query: $query, type: ISSUE, first: 100, after: $after) {
+  search(query: $query, type: ISSUE, first: 25, after: $after) {
     pageInfo {
       hasNextPage
       endCursor
@@ -159,6 +183,7 @@ const prQuery = `query($query: String!, $after: String) {
         mergeable
         mergeStateStatus
         reviewDecision
+        author { login }
         repository {
           nameWithOwner
           name
@@ -203,6 +228,18 @@ const prQuery = `query($query: String!, $after: String) {
           nodes {
             state
             author { login }
+          }
+        }
+        reviewThreads(first: 100) {
+          totalCount
+          nodes { isResolved }
+        }
+        allCommits: commits(last: 100) {
+          nodes {
+            commit {
+              author { user { login } }
+              committer { user { login } }
+            }
           }
         }
       }

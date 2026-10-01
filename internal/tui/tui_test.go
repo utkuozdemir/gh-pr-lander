@@ -52,6 +52,16 @@ func TestMergedCheckErrorDoesNotConfirmClosed(t *testing.T) {
 	}
 }
 
+func TestMergedCheckConfirmsMergeWhenOnlyCleanupFailed(t *testing.T) {
+	m := model{recentlyMerged: map[string]*mergedPR{"org/repo#1": {PR: pr.PR{Repo: "org/repo", Number: 1}}}}
+
+	updated, _ := m.handleMergedCheck(mergedCheckMsg{prKey: "org/repo#1", merged: true, err: errors.New("422")})
+
+	if mp := updated.(model).recentlyMerged["org/repo#1"]; !mp.Confirmed || !mp.Merged {
+		t.Fatalf("expected the merge to be confirmed, got %+v", mp)
+	}
+}
+
 func TestMergedCheckOpenRemovesGoneEntry(t *testing.T) {
 	key := "org/repo#1"
 	m := model{
@@ -113,6 +123,26 @@ func TestDoRerunChecksRejectsFailedNonActionsChecks(t *testing.T) {
 	got := updated.(model)
 
 	if !strings.Contains(got.status, "No failed GitHub Actions jobs") {
+		t.Fatalf("unexpected status: %q", got.status)
+	}
+}
+
+func TestDoRerunChecksExplainsRunningWorkflow(t *testing.T) {
+	m := model{
+		prs: []pr.PR{{
+			Repo:                    "org/repo",
+			Number:                  1,
+			CIStatus:                pr.CIFailed,
+			FailedWorkflowRunsKnown: true,
+			FailedWorkflowRuns:      0,
+			RunningWorkflowRuns:     1,
+		}},
+	}
+
+	updated, _ := m.doRerunChecks()
+	got := updated.(model)
+
+	if !strings.Contains(got.status, "A workflow is still running") {
 		t.Fatalf("unexpected status: %q", got.status)
 	}
 }
@@ -221,6 +251,51 @@ func TestToggleAutoDisableClearsCheckCooldown(t *testing.T) {
 
 	if !got.lastAutoCheck["rerun:"+key].IsZero() {
 		t.Fatal("autorerun check cooldown was not cleared")
+	}
+}
+
+func TestRenderActivePRShowsReviewThreads(t *testing.T) {
+	m := model{width: 120}
+
+	for _, tc := range []struct {
+		name             string
+		resolved, total  int
+		want, wantAbsent string
+	}{
+		{name: "unresolved", resolved: 4, total: 5, want: "Comments ◯ 4/5"},
+		{name: "all resolved", resolved: 5, total: 5, want: "Comments ✓ 5/5"},
+		{name: "no threads", wantAbsent: "Comments"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := m.renderActivePR(pr.PR{
+				Repo:                  "org/repo",
+				Number:                1,
+				ReviewThreads:         tc.total,
+				ResolvedReviewThreads: tc.resolved,
+			}, false)
+
+			if tc.want != "" && !strings.Contains(out, tc.want) {
+				t.Fatalf("expected %q in %q", tc.want, out)
+			}
+
+			if tc.wantAbsent != "" && strings.Contains(out, tc.wantAbsent) {
+				t.Fatalf("did not expect %q in %q", tc.wantAbsent, out)
+			}
+		})
+	}
+}
+
+func TestRenderActivePRShowsTakenOverAuthor(t *testing.T) {
+	m := model{width: 120}
+
+	out := m.renderActivePR(pr.PR{Repo: "org/repo", Number: 1, TakenOverFrom: "contributor"}, false)
+	if !strings.Contains(out, "⇄ @contributor") {
+		t.Fatalf("expected the original author in %q", out)
+	}
+
+	out = m.renderActivePR(pr.PR{Repo: "org/repo", Number: 1}, false)
+	if strings.Contains(out, "⇄") {
+		t.Fatalf("own PR should not show a takeover tag, got %q", out)
 	}
 }
 

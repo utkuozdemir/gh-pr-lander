@@ -1,6 +1,6 @@
 // Package store persists the small amount of state the tool keeps between
-// runs: which PRs have auto-merge / auto-rerun enabled, and the last auto-rerun
-// time (for cooldowns). Everything else (retry counts, etc.) is derived live
+// runs: which PRs have auto-merge / auto-rerun / auto-rebase enabled, the
+// auto-rebase queue order, and the last auto-rerun time (for cooldowns). Everything else (retry counts, etc.) is derived live
 // from the GitHub API, so the on-disk file stays tiny and disposable.
 package store
 
@@ -19,6 +19,9 @@ type DB struct {
 	AutoMerge     map[string]bool
 	AutoRerun     map[string]bool
 	AutoRerunLast map[string]time.Time
+	// AutoRebase maps each PR with auto-rebase on to its queue order. Only the
+	// relative order of PRs on the same repo and base branch matters.
+	AutoRebase map[string]int
 }
 
 // dbData is the on-disk YAML shape.
@@ -26,6 +29,7 @@ type dbData struct {
 	AutoMerge     []string             `yaml:"auto_merge,omitempty"`
 	AutoRerun     []string             `yaml:"auto_rerun,omitempty"`
 	AutoRerunLast map[string]time.Time `yaml:"auto_rerun_last,omitempty"`
+	AutoRebase    map[string]int       `yaml:"auto_rebase,omitempty"`
 }
 
 // Path returns the location of the db file inside the data dir.
@@ -39,6 +43,7 @@ func Load(dataDir string) (DB, error) {
 		AutoMerge:     make(map[string]bool),
 		AutoRerun:     make(map[string]bool),
 		AutoRerunLast: make(map[string]time.Time),
+		AutoRebase:    make(map[string]int),
 	}
 
 	data, err := os.ReadFile(Path(dataDir))
@@ -64,6 +69,7 @@ func Load(dataDir string) (DB, error) {
 	}
 
 	maps.Copy(db.AutoRerunLast, d.AutoRerunLast)
+	maps.Copy(db.AutoRebase, d.AutoRebase)
 
 	return db, nil
 }
@@ -83,6 +89,10 @@ func Save(dataDir string, db DB) error {
 	}
 
 	sort.Strings(d.AutoRerun)
+
+	if len(db.AutoRebase) > 0 {
+		d.AutoRebase = db.AutoRebase
+	}
 
 	if len(db.AutoRerunLast) > 0 {
 		d.AutoRerunLast = make(map[string]time.Time, len(db.AutoRerunLast))

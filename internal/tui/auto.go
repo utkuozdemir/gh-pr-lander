@@ -81,6 +81,16 @@ func (m model) shouldAutoRerun(p pr.PR) bool {
 	return last.IsZero() || time.Since(last) >= m.config.AutoCooldown
 }
 
+// autorerunWillHandle reports whether autorerun is going to re-run the PR's
+// failed checks: it is on, has not given up, and an Actions run on the head
+// failed or is still finishing. A failure outside Actions is never re-run.
+func (m model) autorerunWillHandle(p pr.PR) bool {
+	key := p.RepoShort()
+
+	return m.autoRerun[key] && !m.rerunFailed[key] && p.FailedWorkflowRunsKnown &&
+		(p.FailedWorkflowRuns > 0 || p.RunningWorkflowRuns > 0)
+}
+
 func (m *model) markAutoCheck(kind, key string) bool {
 	if m.lastAutoCheck == nil {
 		m.lastAutoCheck = make(map[string]time.Time)

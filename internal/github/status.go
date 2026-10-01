@@ -38,12 +38,39 @@ func prFromNode(node prNode) pr.PR {
 		p.HeadSHA = node.Commits.Nodes[0].Commit.OID
 	}
 
+	// Threads beyond the first 100 are not fetched and count as unresolved.
+	p.ReviewThreads = node.ReviewThreads.TotalCount
+	for _, thread := range node.ReviewThreads.Nodes {
+		if thread.IsResolved {
+			p.ResolvedReviewThreads++
+		}
+	}
+
 	p.BaseStatus = computeBaseStatus(node)
 	p.CIStatus, p.Checks = computeCIStatus(node)
 	p.ReviewStatus = computeReviewStatus(node)
 	p.OverallStatus = pr.ComputeOverallStatus(p)
 
 	return p
+}
+
+// touchedBy reports whether the user opened the PR or authored or committed any
+// of its last 100 commits, as happens when taking over a community PR to rebase
+// and re-sign it.
+func touchedBy(node prNode, username string) bool {
+	if strings.EqualFold(node.Author.Login, username) {
+		return true
+	}
+
+	for _, c := range node.AllCommits.Nodes {
+		for _, actor := range []gitActor{c.Commit.Author, c.Commit.Committer} {
+			if actor.User != nil && strings.EqualFold(actor.User.Login, username) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func computeBaseStatus(node prNode) pr.BaseStatus {

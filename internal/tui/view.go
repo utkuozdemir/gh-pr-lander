@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -118,8 +119,8 @@ func (m model) renderActivePR(p pr.PR, selected bool) string {
 	maxTitleWidth := max(m.width-30, 20)
 	key := p.RepoShort()
 
-	repoRef := prRepoStyle.Render(key)
-	badge := m.badgeFor(key, p.OverallStatus)
+	repoRef := renderRepoRef(p)
+	badge := m.queueIndicator(key) + m.badgeFor(key, p.OverallStatus)
 	gap := max(m.width-lipgloss.Width(repoRef)-lipgloss.Width(badge)-6, 1)
 	line1 := repoRef + strings.Repeat(" ", gap) + badge
 
@@ -129,8 +130,14 @@ func (m model) renderActivePR(p pr.PR, selected bool) string {
 	base := "Base " + baseIndicator(p.BaseStatus)
 	ci := "CI " + ciIndicator(p.CIStatus, p.Checks)
 	review := "Review " + reviewIndicator(p.ReviewStatus)
-	auto := m.autoIndicators(key)
-	line3 := prDescStyle.Render(base + "  " + ci + "  " + review + auto)
+	auto := m.autoIndicators(p)
+
+	comments := ""
+	if p.ReviewThreads > 0 {
+		comments = "  Comments " + threadsIndicator(p)
+	}
+
+	line3 := prDescStyle.Render(base + "  " + ci + "  " + review + comments + auto)
 
 	content := line1 + "\n" + line2 + "\n" + line3 + "\n"
 
@@ -144,7 +151,7 @@ func (m model) renderActivePR(p pr.PR, selected bool) string {
 func (m model) renderMergedItem(item displayItem, selected bool) string {
 	maxTitleWidth := max(m.width-30, 20)
 
-	repoRef := prRepoStyle.Render(item.pr.RepoShort())
+	repoRef := renderRepoRef(item.pr)
 	confirmed := false
 	merged := false
 
@@ -186,6 +193,17 @@ func (m model) renderMergedItem(item displayItem, selected bool) string {
 	return normalStyle.Render(content)
 }
 
+// renderRepoRef renders "owner/repo#123" with the number highlighted, plus the
+// original author for PRs taken over from someone else.
+func renderRepoRef(p pr.PR) string {
+	ref := prRepoStyle.Render(p.Repo+"#") + prNumberStyle.Render(strconv.Itoa(p.Number))
+	if p.TakenOverFrom != "" {
+		ref += "  " + prTakenOverStyle.Render("⇄ @"+p.TakenOverFrom)
+	}
+
+	return ref
+}
+
 func (m model) badgeFor(key string, status pr.OverallStatus) string {
 	if m.isMergeFailed(key) {
 		return badgeMergeFailed.Render("MERGE FAIL")
@@ -198,7 +216,9 @@ func (m model) badgeFor(key string, status pr.OverallStatus) string {
 	return statusBadge(status)
 }
 
-func (m model) autoIndicators(key string) string {
+func (m model) autoIndicators(p pr.PR) string {
+	key := p.RepoShort()
+
 	var parts []string
 
 	if m.isMergeFailed(key) {
@@ -213,11 +233,40 @@ func (m model) autoIndicators(key string) string {
 		parts = append(parts, indicatorAuto.Render("⚡ autorerun"))
 	}
 
+	if _, on := m.autoRebase[key]; on {
+		reason, failed := m.rebaseFailure(p)
+
+		switch {
+		case failed:
+			parts = append(parts, indicatorFail.Render("⚡ rebase failed: "+reason))
+		case m.rebasing == key:
+			parts = append(parts, indicatorAuto.Render("⚡ rebasing…"))
+		default:
+			parts = append(parts, indicatorAuto.Render("⚡ autorebase"))
+		}
+	}
+
 	if len(parts) == 0 {
 		return ""
 	}
 
 	return "  " + strings.Join(parts, " ")
+}
+
+// queueIndicator shows the PR's place in its auto-rebase queue, "▶ 1/3" for
+// the active PR and "⏳ 2/3" for one waiting its turn.
+func (m model) queueIndicator(key string) string {
+	slot, ok := m.queueSlots()[key]
+	if !ok {
+		return ""
+	}
+
+	mark := "⏳"
+	if slot.active {
+		mark = "▶"
+	}
+
+	return indicatorAuto.Render(fmt.Sprintf("%s %d/%d", mark, slot.pos, slot.total)) + "  "
 }
 
 func truncateDisplayWidth(s string, maxWidth int) string {
@@ -265,6 +314,8 @@ func (m model) renderFooter() string {
 		{"t", "re-run"},
 		{"a", "automerge"},
 		{"A", "autorerun"},
+		{"b", "autorebase"},
+		{"J/K", "queue order"},
 		{"o", "open"},
 		{"R", "refresh"},
 		{"q", "quit"},

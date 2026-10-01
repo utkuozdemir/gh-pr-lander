@@ -80,13 +80,13 @@ func BuildRebaseScript(dataDir string, p pr.PR, countdown int) (string, error) {
 		"trap 'pause_on_error $?' ERR",
 		"set -eE",
 		"",
-		fmt.Sprintf("REPO_PATH=%q", repoPath),
-		fmt.Sprintf("FORK_URL=%q", forkURL),
-		fmt.Sprintf("UPSTREAM_URL=%q", upstreamURL),
-		fmt.Sprintf("PR_BRANCH=%q", p.HeadBranch),
-		fmt.Sprintf("BASE_BRANCH=%q", p.BaseBranch),
+		"REPO_PATH=" + shellQuote(repoPath),
+		"FORK_URL=" + shellQuote(forkURL),
+		"UPSTREAM_URL=" + shellQuote(upstreamURL),
+		"PR_BRANCH=" + shellQuote(p.HeadBranch),
+		"BASE_BRANCH=" + shellQuote(p.BaseBranch),
 		fmt.Sprintf("IS_FORK=%t", isFork),
-		fmt.Sprintf("REBASE_TARGET=%q", rebaseTarget),
+		"REBASE_TARGET=" + shellQuote(rebaseTarget),
 		"",
 		blankEcho,
 		`echo "==> Rebasing ${PR_BRANCH} onto ${REBASE_TARGET}"`,
@@ -102,7 +102,7 @@ func BuildRebaseScript(dataDir string, p pr.PR, countdown int) (string, error) {
 		"",
 		"# Include user-provided gitconfig (signing keys, user identity, etc.)",
 		"# Git silently ignores the include if the file doesn't exist.",
-		fmt.Sprintf("git config --local include.path %q", ConfigPath()),
+		"git config --local include.path " + shellQuote(ConfigPath()),
 		"",
 		"# Ensure origin points to fork",
 		`git remote set-url origin "${FORK_URL}"`,
@@ -154,4 +154,10 @@ func BuildRebaseScript(dataDir string, p pr.PR, countdown int) (string, error) {
 	}
 
 	return strings.Join(lines, "\n"), nil
+}
+
+// shellQuote single-quotes s for bash, so values from the GitHub API such as a
+// contributor's branch name are never expanded or executed.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

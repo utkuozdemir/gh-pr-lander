@@ -75,7 +75,7 @@ func (p *Poller) Refresh() {
 // next tick is shortened so a CI pass or failure is picked up within seconds,
 // not minutes; when everything is idle it relaxes back to the configured
 // interval. GitHub has no push/websocket API a local tool could subscribe to,
-// so polling is the only option (see CLAUDE.md), and this keeps it both
+// so polling is the only option (see AGENTS.md), and this keeps it both
 // responsive and cheap. It is meant to be driven by a structured-concurrency
 // group (errgroup) and returns ctx.Err() so the group can observe cancellation.
 func (p *Poller) Run(ctx context.Context) error {

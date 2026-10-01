@@ -1,6 +1,7 @@
 package store
 
 import (
+	"maps"
 	"os"
 	"testing"
 	"time"
@@ -11,8 +12,9 @@ func TestSaveLoadPersistsAutoRerunLast(t *testing.T) {
 	last := time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
 
 	if err := Save(dir, DB{
-		AutoMerge: map[string]bool{"org/repo#1": true},
-		AutoRerun: map[string]bool{"org/repo#2": true},
+		AutoMerge:  map[string]bool{"org/repo#1": true},
+		AutoRerun:  map[string]bool{"org/repo#2": true},
+		AutoRebase: map[string]int{"org/repo#3": 2, "org/repo#4": 1},
 		AutoRerunLast: map[string]time.Time{
 			"org/repo#2": last,
 			"stale#3":    last.Add(time.Hour),
@@ -32,6 +34,10 @@ func TestSaveLoadPersistsAutoRerunLast(t *testing.T) {
 
 	if !db.AutoRerun["org/repo#2"] {
 		t.Fatal("missing autorerun entry")
+	}
+
+	if !maps.Equal(db.AutoRebase, map[string]int{"org/repo#3": 2, "org/repo#4": 1}) {
+		t.Fatalf("unexpected autorebase queue: %v", db.AutoRebase)
 	}
 
 	if !db.AutoRerunLast["org/repo#2"].Equal(last) {

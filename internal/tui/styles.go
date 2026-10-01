@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
@@ -12,6 +14,7 @@ var (
 	colorYellow = lipgloss.Color("#eab308")
 	colorRed    = lipgloss.Color("#ef4444")
 	colorCyan   = lipgloss.Color("#06b6d4")
+	colorBlue   = lipgloss.Color("#5b84c4")
 	colorPurple = lipgloss.Color("#8b5cf6")
 	colorOrange = lipgloss.Color("#f97316")
 	colorGray   = lipgloss.Color("#6b7280")
@@ -42,6 +45,14 @@ var (
 
 	prRepoStyle = lipgloss.NewStyle().
 			Foreground(colorGray)
+
+	prNumberStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorBlue)
+
+	prTakenOverStyle = lipgloss.NewStyle().
+				Foreground(colorGray).
+				Italic(true)
 
 	prDescStyle = lipgloss.NewStyle().
 			Foreground(colorDim)
@@ -159,6 +170,17 @@ func ciIndicator(status pr.CIStatus, checks pr.CheckSummary) string {
 	default:
 		return ""
 	}
+}
+
+// threadsIndicator shows resolved/total inline comment threads, in the warning
+// color while any are unresolved, so merging over open comments stands out.
+func threadsIndicator(p pr.PR) string {
+	counts := fmt.Sprintf("%d/%d", p.ResolvedReviewThreads, p.ReviewThreads)
+	if p.ResolvedReviewThreads < p.ReviewThreads {
+		return indicatorWarn.Render("◯ " + counts)
+	}
+
+	return indicatorPass.Render("✓ " + counts)
 }
 
 func reviewIndicator(status pr.ReviewStatus) string {

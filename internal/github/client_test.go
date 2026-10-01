@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -112,6 +113,52 @@ func TestFetchPRsFiltersArchivedRepos(t *testing.T) {
 	}
 }
 
+func TestFetchPRsKeepsOnlyPRsTheUserTouched(t *testing.T) {
+	client := &Client{
+		token:    "token",
+		username: "me",
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var payload struct {
+				Variables map[string]any `json:"variables"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+
+			if query, _ := payload.Variables["query"].(string); !strings.Contains(query, "involves:@me") {
+				t.Fatalf("expected an involves:@me search, got %q", query)
+			}
+
+			body := graphQLPRPage(false, "",
+				graphQLPRNode("org/repo", 1, "sha1"),
+				// Only commented on: the commits are all someone else's.
+				graphQLForeignPRNode("org/repo", 2, "other", [2]string{"other", "other"}, [2]string{"", ""}),
+				// Rebased and re-signed: the user is the committer.
+				graphQLForeignPRNode("org/repo", 3, "other", [2]string{"other", "Me"}),
+				// The user added a commit that is no longer the head.
+				graphQLForeignPRNode("org/repo", 4, "other", [2]string{"me", "me"}, [2]string{"other", "other"}),
+			)
+
+			return testJSONResponse(body, nil), nil
+		})},
+	}
+
+	prs, err := client.FetchPRs(context.Background(), []string{"org"})
+	if err != nil {
+		t.Fatalf("FetchPRs: %v", err)
+	}
+
+	got := map[int]string{}
+	for _, p := range prs {
+		got[p.Number] = p.TakenOverFrom
+	}
+
+	want := map[int]string{1: "", 3: "other", 4: "other"}
+	if !maps.Equal(got, want) {
+		t.Fatalf("expected PRs (number -> taken over from) %v, got %v", want, got)
+	}
+}
+
 func TestCountMergeCommentsPaginatesAndRequiresUsername(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	client := &Client{
@@ -200,6 +247,30 @@ func TestFailedWorkflowRunsSummaryPaginates(t *testing.T) {
 	}
 }
 
+func TestFailedWorkflowRunsSummaryCountsRunningRuns(t *testing.T) {
+	client := &Client{
+		token: "token",
+		httpClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			// A run with a failed job but other jobs still going reports no
+			// conclusion yet, so it is running, not failed.
+			body := `{"workflow_runs":[` +
+				`{"id":1,"status":"in_progress","conclusion":null},` +
+				`{"id":2,"status":"completed","conclusion":"success"}]}`
+
+			return testJSONResponse(body, nil), nil
+		})},
+	}
+
+	summary, err := client.FailedWorkflowRunsSummary(context.Background(), "org/repo", "sha")
+	if err != nil {
+		t.Fatalf("FailedWorkflowRunsSummary: %v", err)
+	}
+
+	if summary.Count != 0 || summary.Running != 1 {
+		t.Fatalf("expected 0 failed and 1 running, got %d failed and %d running", summary.Count, summary.Running)
+	}
+}
+
 func TestComputeCIStatusTreatsUnfetchedChecksAsPending(t *testing.T) {
 	status, summary := computeCIStatus(prNode{
 		Commits: commitConn{Nodes: []commitNode{{
@@ -249,6 +320,19 @@ func TestComputeCIStatusHonorsPendingRollupState(t *testing.T) {
 	}
 }
 
+func TestPRFromNodeCountsReviewThreads(t *testing.T) {
+	// 3 threads exist but only 2 were fetched, the unfetched one counts as
+	// unresolved.
+	p := prFromNode(prNode{ReviewThreads: threadConn{
+		TotalCount: 3,
+		Nodes:      []threadNode{{IsResolved: true}, {IsResolved: true}},
+	}})
+
+	if p.ReviewThreads != 3 || p.ResolvedReviewThreads != 2 {
+		t.Fatalf("expected 2/3 resolved threads, got %d/%d", p.ResolvedReviewThreads, p.ReviewThreads)
+	}
+}
+
 func graphQLPRPage(hasNext bool, cursor string, nodes ...string) string {
 	return `{"data":{"search":{"pageInfo":{"hasNextPage":` + boolJSON(
 		hasNext,
@@ -259,14 +343,33 @@ func graphQLPRPage(hasNext bool, cursor string, nodes ...string) string {
 }
 
 func graphQLPRNode(repo string, number int, sha string) string {
-	return graphQLPRNodeWithArchived(repo, number, sha, false)
+	return graphQLPRNodeFull(repo, number, sha, false, "me", `{"nodes":[]}`)
 }
 
 func graphQLArchivedPRNode(repo string, number int, sha string) string {
-	return graphQLPRNodeWithArchived(repo, number, sha, true)
+	return graphQLPRNodeFull(repo, number, sha, true, "me", `{"nodes":[]}`)
 }
 
-func graphQLPRNodeWithArchived(repo string, number int, sha string, archived bool) string {
+// graphQLForeignPRNode is a PR opened by author, whose commits were authored and
+// committed by the given logins ("" for a commit email not linked to a user).
+func graphQLForeignPRNode(repo string, number int, author string, commits ...[2]string) string {
+	actor := func(login string) string {
+		if login == "" {
+			return `{"user":null}`
+		}
+
+		return `{"user":{"login":"` + login + `"}}`
+	}
+
+	nodes := make([]string, len(commits))
+	for i, c := range commits {
+		nodes[i] = `{"commit":{"author":` + actor(c[0]) + `,"committer":` + actor(c[1]) + `}}`
+	}
+
+	return graphQLPRNodeFull(repo, number, "sha", false, author, `{"nodes":[`+strings.Join(nodes, ",")+`]}`)
+}
+
+func graphQLPRNodeFull(repo string, number int, sha string, archived bool, author, allCommits string) string {
 	parts := strings.Split(repo, "/")
 
 	return `{
@@ -280,11 +383,13 @@ func graphQLPRNodeWithArchived(repo string, number int, sha string, archived boo
 		"mergeable":"MERGEABLE",
 		"mergeStateStatus":"CLEAN",
 		"reviewDecision":"",
+		"author":{"login":"` + author + `"},
 		"repository":{"nameWithOwner":"` + repo + `","name":"` + parts[1] + `","isArchived":` + boolJSON(archived) + `,"owner":{"login":"` + parts[0] + `"}},
 		"headRepository":{"nameWithOwner":"me/` + parts[1] + `","name":"` + parts[1] + `","owner":{"login":"me"}},
 		"headRef":{"name":"branch","target":{"oid":"` + sha + `"}},
 		"commits":{"nodes":[{"commit":{"oid":"` + sha + `","statusCheckRollup":null}}]},
-		"reviews":{"nodes":[]}
+		"reviews":{"nodes":[]},
+		"allCommits":` + allCommits + `
 	}`
 }
 

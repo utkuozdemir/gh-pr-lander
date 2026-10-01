@@ -99,11 +99,19 @@ type PR struct {
 	Checks           CheckSummary
 	MergeStateStatus string // raw from GitHub
 	ReviewDecision   string // raw from GitHub
+	// ReviewThreads is the number of inline review comment threads, of which
+	// ResolvedReviewThreads are resolved.
+	ReviewThreads         int
+	ResolvedReviewThreads int
+	// TakenOverFrom is the original author's login when the PR was opened by
+	// someone else and the user committed to it. Empty for the user's own PRs.
+	TakenOverFrom string
 	// FailedWorkflowRuns* is populated from the Actions REST API for failed PRs.
 	FailedWorkflowRunsKnown bool
 	FailedWorkflowRuns      int
 	MaxFailedRunAttempt     int
 	LatestFailedRunUpdate   time.Time
+	RunningWorkflowRuns     int
 }
 
 // RepoShort is the stable key used to identify a PR everywhere, e.g.

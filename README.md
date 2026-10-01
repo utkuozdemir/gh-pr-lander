@@ -10,18 +10,41 @@ This means a lot of rebasing. When someone merges before you, your PR goes stale
 
 ## What this does
 
-Keep it open in a terminal tab. It polls your open PRs across configured GitHub orgs and shows their status: base branch freshness, CI, reviews.
+Keep it open in a terminal tab. It polls your open PRs across configured GitHub orgs and shows their status: base branch freshness, CI, reviews, and resolved inline comment threads (`Comments 4/5` in yellow while any are open, green once all are resolved, hidden when there are none).
+
+PRs opened by someone else that you took over (rebased, re-signed or added commits to) are listed too, tagged `⇄ @author`. GitHub search can only find them if you commented on, were assigned to, or were mentioned in the PR, so assign yourself when you take one over.
 
 - `r` rebases. Drops into a real local `git rebase` so your YubiKey signs the commits. Returns to the TUI after a few seconds on success.
 - `m` posts `/m` as a PR comment. The bot does the fast-forward merge.
 - `a` toggles automerge. Posts `/m` automatically when the PR is ready. Gives up after 3 attempts (counted from actual `/m` comments on the PR).
 - `A` toggles autorerun. Re-runs failed CI jobs automatically. Gives up based on workflow `run_attempt` from the GitHub API.
+- `b` toggles autorebase. Rebases the PR in the background when it falls behind its base branch, one PR at a time per repo and base branch (see below). A failed rebase, usually a missed YubiKey touch, is not retried: the row shows why it failed, a notification asks for you, and its queue waits until you press `b` on it again to retry, or rebase it with `r`.
 - `t` re-runs failed CI jobs manually.
 - `Enter` opens the PR in your browser.
 
+### Autorebase queue
+
+With fast-forward merges, merging one PR makes every other PR on the same base branch behind again, so rebasing several at once only makes them wait for CI runners for nothing. Autorebase therefore treats each repo and base branch as a queue, in the order you turned it on. The first PR that could merge once it is up to date (not a draft, no conflicts, review not pending, CI not failed, or failed but autorerun is re-running it) is the active one, shown as `▶ 1/3` in orange. While it is up to date and in CI, the others wait (`⏳ 2/3`). Once it merges or drops out, the next one is rebased. `K` and `J` move the selected PR up and down its queue, which changes who goes next but never interrupts the active PR. To let a hotfix jump the queue, move it to the top and turn autorebase off on the active PR.
+
+Autorebase runs the same script as `r`, without taking over the terminal. Signing still needs your YubiKey touch, so it only gets far while you are at the machine. Repos that do not require branches to be up to date never report a PR as behind, so autorebase does nothing there. Combine it with automerge for the full loop: rebase, CI, `/m`, then the next PR.
+
 Merged PRs stay visible for an hour with a purple badge, so you can see what went through. The head branch on your fork is automatically deleted after a confirmed merge.
 
-Desktop notifications fire when a PR becomes mergeable, goes stale, or has failing checks.
+Desktop notifications use a different macOS sound per event, so you can tell them apart without looking:
+
+| Event | Sound |
+|---|---|
+| Ready to merge | Glass |
+| Merge posted by automerge | Pop |
+| Merged | Hero |
+| Closed without merge | Bottle |
+| Checks failed | Basso |
+| PR needs rebase | Submarine |
+| Autorebase needs you | Sosumi |
+| Automerge gave up | Funk |
+| Autorerun gave up | Frog |
+
+When automation is on for a PR, the event it is about to handle stays quiet and only its outcome notifies: no "ready to merge" with automerge on, no "checks failed" while autorerun can re-run the failure (a GitHub Actions job), no "needs rebase" with autorebase on.
 
 The tool keeps its own repo clones under `~/.sidero-rebaser/repos/` and never touches your working directories.
 
@@ -59,6 +82,8 @@ Or `go run .` from source. All settings have defaults, `--help` for the full lis
 | `m` | Post merge comment (ff merge via bot) |
 | `a` | Toggle automerge for selected PR |
 | `A` | Toggle autorerun for selected PR |
+| `b` | Toggle autorebase for selected PR |
+| `K` / `J` | Move selected PR up / down its autorebase queue |
 | `t` | Re-run failed CI jobs |
 | `Enter` / `o` | Open in browser |
 | `R` | Refresh now |
