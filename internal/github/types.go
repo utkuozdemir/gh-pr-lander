@@ -36,6 +36,8 @@ type prNode struct {
 	IsDraft          bool       `json:"isDraft"`
 	BaseRefName      string     `json:"baseRefName"`
 	HeadRefName      string     `json:"headRefName"`
+	BaseRefOID       string     `json:"baseRefOid"`
+	BaseRef          *refNode   `json:"baseRef"`
 	Mergeable        string     `json:"mergeable"`
 	MergeStateStatus string     `json:"mergeStateStatus"`
 	ReviewDecision   string     `json:"reviewDecision"`
@@ -180,6 +182,8 @@ const prQuery = `query($query: String!, $after: String) {
         isDraft
         baseRefName
         headRefName
+        baseRefOid
+        baseRef { target { oid } }
         mergeable
         mergeStateStatus
         reviewDecision

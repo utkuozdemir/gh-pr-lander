@@ -333,6 +333,45 @@ func TestPRFromNodeCountsReviewThreads(t *testing.T) {
 	}
 }
 
+func TestPRFromNodeDetectsUnenforcedBehind(t *testing.T) {
+	// GitHub reports CLEAN when the base branch does not require being up to
+	// date, even though main moved past the PR's base.
+	node := prNode{
+		MergeStateStatus: "CLEAN",
+		BaseRefOID:       "old",
+		BaseRef:          &refNode{Target: targetNode{OID: "new"}},
+	}
+
+	p := prFromNode(node)
+	if p.BaseStatus != pr.BaseBehind || !p.BehindUnenforced {
+		t.Fatalf("expected unenforced behind, got status %v unenforced %v", p.BaseStatus, p.BehindUnenforced)
+	}
+
+	if p.OverallStatus != pr.StatusStale {
+		t.Fatalf("expected StatusStale, got %v", p.OverallStatus)
+	}
+
+	node.MergeStateStatus = "UNKNOWN"
+	node.Mergeable = "MERGEABLE"
+
+	p = prFromNode(node)
+	if p.BaseStatus != pr.BaseBehind || p.BehindUnenforced {
+		t.Fatalf(
+			"expected behind with enforcement unknown, got status %v unenforced %v",
+			p.BaseStatus,
+			p.BehindUnenforced,
+		)
+	}
+
+	node.MergeStateStatus = "CLEAN"
+	node.BaseRef.Target.OID = "old"
+
+	p = prFromNode(node)
+	if p.BaseStatus != pr.BaseSynced || p.BehindUnenforced {
+		t.Fatalf("expected synced, got status %v unenforced %v", p.BaseStatus, p.BehindUnenforced)
+	}
+}
+
 func graphQLPRPage(hasNext bool, cursor string, nodes ...string) string {
 	return `{"data":{"search":{"pageInfo":{"hasNextPage":` + boolJSON(
 		hasNext,

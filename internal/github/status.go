@@ -47,6 +47,13 @@ func prFromNode(node prNode) pr.PR {
 	}
 
 	p.BaseStatus = computeBaseStatus(node)
+	if p.BaseStatus == pr.BaseSynced && behindBase(node) {
+		p.BaseStatus = pr.BaseBehind
+		// UNKNOWN means GitHub has not computed the merge state yet, so it says
+		// nothing about whether the branch enforces being up to date.
+		p.BehindUnenforced = !strings.EqualFold(node.MergeStateStatus, "UNKNOWN")
+	}
+
 	p.CIStatus, p.Checks = computeCIStatus(node)
 	p.ReviewStatus = computeReviewStatus(node)
 	p.OverallStatus = pr.ComputeOverallStatus(p)
@@ -71,6 +78,18 @@ func touchedBy(node prNode, username string) bool {
 	}
 
 	return false
+}
+
+// behindBase reports whether the base branch has moved past the commit the PR
+// is based on. GitHub only reports BEHIND when the base branch requires
+// branches to be up to date and has required checks, so without this a PR in
+// a repo that does not enforce it shows as synced however far behind it is.
+func behindBase(node prNode) bool {
+	if node.BaseRefOID == "" || node.BaseRef == nil || node.BaseRef.Target.OID == "" {
+		return false
+	}
+
+	return node.BaseRefOID != node.BaseRef.Target.OID
 }
 
 func computeBaseStatus(node prNode) pr.BaseStatus {

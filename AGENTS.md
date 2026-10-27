@@ -369,6 +369,19 @@ the generated assignment in real bash to prove it stays literal.
   threads and `allCommits`. `first: 25` brings the full query to 1. Pagination
   covers more than 25 PRs. Measure with `rateLimit { cost }` before adding
   nested connections.
+- **`mergeStateStatus` only says `BEHIND` when the base branch enforces it**:
+  "require up to date" on, plus at least one required check. Without that
+  (ops-managed-siderolabs has strict on but zero required checks) a behind PR
+  reports `CLEAN`/`BLOCKED`/`UNSTABLE`. So `prFromNode` also compares
+  `baseRefOid` (the commit the PR is based on) with the base branch tip, and
+  marks the PR `BaseBehind` with `BehindUnenforced` set, shown as a blue
+  "behind (not enforced)". Logic treats it exactly like `BaseBehind`, since
+  `/m` merges fast-forward. `baseRefOid` matched the PR's first commit's
+  parent on every PR sampled, and costs nothing, while asking for that
+  parent doubles the query cost. Where it is enforced, GitHub reports
+  `BEHIND` even when a review is also missing, so the flag is honest. It
+  stays off while `mergeStateStatus` is `UNKNOWN` (GitHub still computing),
+  which says nothing about enforcement.
 - **PR identity** is `pr.RepoShort()` → `"owner/repo#number"`. It is the key in
   every map (automerge, in-flight, recentlyMerged, cooldowns).
 - **Branch deletion after merge** only happens on forks you own

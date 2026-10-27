@@ -104,6 +104,7 @@ var (
 	indicatorFail    = lipgloss.NewStyle().Foreground(colorRed)
 	indicatorRunning = lipgloss.NewStyle().Foreground(colorCyan)
 	indicatorNone    = lipgloss.NewStyle().Foreground(colorGray)
+	indicatorInfo    = lipgloss.NewStyle().Foreground(colorBlue)
 	indicatorAuto    = lipgloss.NewStyle().Foreground(colorOrange)
 
 	// Footer.
@@ -142,11 +143,15 @@ func statusBadge(status pr.OverallStatus) string {
 	}
 }
 
-func baseIndicator(status pr.BaseStatus) string {
-	switch status {
+func baseIndicator(p pr.PR) string {
+	switch p.BaseStatus {
 	case pr.BaseSynced:
 		return indicatorPass.Render("✓ synced")
 	case pr.BaseBehind:
+		if p.BehindUnenforced {
+			return indicatorInfo.Render("↻ behind (not enforced)")
+		}
+
 		return indicatorWarn.Render("↻ behind")
 	case pr.BaseConflict:
 		return indicatorFail.Render("✗ conflict")

@@ -127,7 +127,7 @@ func (m model) renderActivePR(p pr.PR, selected bool) string {
 	title := truncateDisplayWidth(p.Title, maxTitleWidth)
 	line2 := prTitleStyle.Render(title)
 
-	base := "Base " + baseIndicator(p.BaseStatus)
+	base := "Base " + baseIndicator(p)
 	ci := "CI " + ciIndicator(p.CIStatus, p.Checks)
 	review := "Review " + reviewIndicator(p.ReviewStatus)
 	auto := m.autoIndicators(p)

@@ -99,6 +99,9 @@ type PR struct {
 	Checks           CheckSummary
 	MergeStateStatus string // raw from GitHub
 	ReviewDecision   string // raw from GitHub
+	// BehindUnenforced marks a BaseBehind PR that GitHub still reports as
+	// mergeable, because its base branch does not require being up to date.
+	BehindUnenforced bool
 	// ReviewThreads is the number of inline review comment threads, of which
 	// ResolvedReviewThreads are resolved.
 	ReviewThreads         int
