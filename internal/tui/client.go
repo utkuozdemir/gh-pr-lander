@@ -21,6 +21,7 @@ type Client interface {
 	) (count int, lastTime time.Time, err error)
 	FailedWorkflowRunsSummary(ctx context.Context, repo, headSHA string) (github.WorkflowSummary, error)
 	RerunFailedJobs(ctx context.Context, repo, headSHA string) error
+	ApproveWorkflowRuns(ctx context.Context, repo, headSHA string) error
 	GetPRState(ctx context.Context, repo string, prNumber int) (github.PRState, error)
 	DeleteBranch(ctx context.Context, repo, branch string) error
 	Username() string

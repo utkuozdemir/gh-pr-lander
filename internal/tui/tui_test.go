@@ -28,7 +28,8 @@ func (f fakeClient) CountMergeComments(context.Context, string, int, string) (in
 func (f fakeClient) FailedWorkflowRunsSummary(context.Context, string, string) (github.WorkflowSummary, error) {
 	return github.WorkflowSummary{}, nil
 }
-func (f fakeClient) RerunFailedJobs(context.Context, string, string) error { return nil }
+func (f fakeClient) RerunFailedJobs(context.Context, string, string) error     { return nil }
+func (f fakeClient) ApproveWorkflowRuns(context.Context, string, string) error { return nil }
 func (f fakeClient) GetPRState(context.Context, string, int) (github.PRState, error) {
 	return github.PRState{}, nil
 }
@@ -144,6 +145,28 @@ func TestDoRerunChecksExplainsRunningWorkflow(t *testing.T) {
 
 	if !strings.Contains(got.status, "A workflow is still running") {
 		t.Fatalf("unexpected status: %q", got.status)
+	}
+}
+
+func TestApproveWorkflowsOnlyForPRsAwaitingApproval(t *testing.T) {
+	m := model{prs: []pr.PR{{Repo: "org/repo", Number: 1}}}
+
+	if strings.Contains(m.renderFooter(), "approve workflows") {
+		t.Fatal("footer offers approval on a PR with nothing awaiting it")
+	}
+
+	if _, cmd := m.doApproveWorkflows(); cmd != nil {
+		t.Fatal("expected no approve command on a PR with nothing awaiting approval")
+	}
+
+	m.prs[0].AwaitingApprovalRuns = 1
+
+	if !strings.Contains(m.renderFooter(), "approve workflows") {
+		t.Fatal("footer does not offer approval on a PR awaiting it")
+	}
+
+	if _, cmd := m.doApproveWorkflows(); cmd == nil {
+		t.Fatal("expected an approve command")
 	}
 }
 

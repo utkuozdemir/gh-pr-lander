@@ -285,6 +285,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(clearStatusCmd(), delayedRefreshCmd(15*time.Second))
 
+	case workflowsApprovedMsg:
+		if msg.err != nil {
+			slog.Error("failed to approve workflows", "pr", msg.pr.RepoShort(), "error", msg.err)
+			m.status = errorStyle.Render("✗ Approve failed: " + msg.err.Error())
+		} else {
+			slog.Info("approved workflows", "pr", msg.pr.RepoShort())
+			m.status = successStyle.Render("✓ Approved workflows on " + msg.pr.RepoShort())
+		}
+
+		m.triggerRefresh()
+
+		return m, tea.Batch(clearStatusCmd(), delayedRefreshCmd(15*time.Second))
+
 	case rebaseFinishedMsg:
 		m.rebasing = ""
 
@@ -366,6 +379,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.doRebase()
 	case "t":
 		return m.doRerunChecks()
+	case "w":
+		return m.doApproveWorkflows()
 	case "a":
 		return m.toggleAuto(m.autoMerge, m.mergeFailed, "automerge")
 	case "A":
@@ -483,6 +498,17 @@ func (m model) doRerunChecks() (tea.Model, tea.Cmd) {
 	m.status = fmt.Sprintf("Re-running failed jobs on %s...", key)
 
 	return m, rerunChecksCmd(m.client, item.pr)
+}
+
+func (m model) doApproveWorkflows() (tea.Model, tea.Cmd) {
+	item, ok := m.selectedItem()
+	if !ok || item.merged || item.pr.AwaitingApprovalRuns == 0 {
+		return m, nil
+	}
+
+	m.status = fmt.Sprintf("Approving workflows on %s...", item.pr.RepoShort())
+
+	return m, approveWorkflowsCmd(m.client, item.pr)
 }
 
 func (m model) openInBrowser() (tea.Model, tea.Cmd) {

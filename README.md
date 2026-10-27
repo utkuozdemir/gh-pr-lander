@@ -14,7 +14,7 @@ Keep it open in a terminal tab. It polls your open PRs across configured GitHub 
 
 PRs opened by someone else that you took over (rebased, re-signed or added commits to) are listed too, tagged `⇄ @author`. GitHub search can only find them if you commented on, were assigned to, or were mentioned in the PR, so assign yourself when you take one over.
 
-A PR that looks approved and green but that GitHub still blocks from merging shows as `BLOCKED`, and automerge leaves it alone. The usual cause is a community PR whose workflows wait for a maintainer to approve them, shown as `⏸ workflow awaiting approval`. Approve them on GitHub and CI starts.
+A PR that looks approved and green but that GitHub still blocks from merging shows as `BLOCKED`, and automerge leaves it alone. The usual cause is a community PR whose workflows wait for a maintainer to approve them, shown as `⏸ workflow awaiting approval`. Press `w` to approve them and CI starts.
 
 - `r` rebases. Drops into a real local `git rebase` so your YubiKey signs the commits. Returns to the TUI after a few seconds on success.
 - `m` posts `/m` as a PR comment. The bot does the fast-forward merge.
@@ -22,6 +22,7 @@ A PR that looks approved and green but that GitHub still blocks from merging sho
 - `A` toggles autorerun. Re-runs failed CI jobs automatically. Gives up based on workflow `run_attempt` from the GitHub API.
 - `b` toggles autorebase. Rebases the PR in the background when it falls behind its base branch, one PR at a time per repo and base branch (see below). A failed rebase, usually a missed YubiKey touch, is not retried: the row shows why it failed, a notification asks for you, and its queue waits until you press `b` on it again to retry, or rebase it with `r`.
 - `t` re-runs failed CI jobs manually.
+- `w` approves the workflows of a community PR that wait for a maintainer, like GitHub's "Approve workflows to run" button. It shows in the footer only on such a PR.
 - `Enter` opens the PR in your browser.
 
 ### Autorebase queue

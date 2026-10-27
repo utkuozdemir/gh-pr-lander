@@ -32,6 +32,11 @@ type checksRerunMsg struct {
 	err error
 }
 
+type workflowsApprovedMsg struct {
+	pr  pr.PR
+	err error
+}
+
 type rebaseFinishedMsg struct {
 	err error
 }
@@ -108,6 +113,17 @@ func rerunChecksCmd(client Client, p pr.PR) tea.Cmd {
 		err := client.RerunFailedJobs(ctx, p.Repo, p.HeadSHA)
 
 		return checksRerunMsg{pr: p, err: err}
+	}
+}
+
+func approveWorkflowsCmd(client Client, p pr.PR) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		err := client.ApproveWorkflowRuns(ctx, p.Repo, p.HeadSHA)
+
+		return workflowsApprovedMsg{pr: p, err: err}
 	}
 }
 

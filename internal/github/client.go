@@ -483,47 +483,63 @@ func (c *Client) listWorkflowRuns(ctx context.Context, repoFullName string, head
 // RerunFailedJobs re-runs the failed jobs of every failed workflow run on the
 // given head SHA. Returns an error if there were none to re-run.
 func (c *Client) RerunFailedJobs(ctx context.Context, repoFullName string, headSHA string) error {
+	return c.postToWorkflowRuns(ctx, repoFullName, headSHA, isFailedWorkflowConclusion, "rerun-failed-jobs")
+}
+
+// ApproveWorkflowRuns approves the runs from a fork that wait for a maintainer
+// to approve them, the same as GitHub's "Approve workflows to run" button.
+func (c *Client) ApproveWorkflowRuns(ctx context.Context, repoFullName string, headSHA string) error {
+	return c.postToWorkflowRuns(ctx, repoFullName, headSHA, func(conclusion string) bool {
+		return conclusion == "action_required"
+	}, "approve")
+}
+
+// postToWorkflowRuns posts the given action to every run of headSHA whose
+// conclusion matches.
+func (c *Client) postToWorkflowRuns(
+	ctx context.Context,
+	repoFullName string,
+	headSHA string,
+	matches func(conclusion string) bool,
+	action string,
+) error {
 	runs, err := c.listWorkflowRuns(ctx, repoFullName, headSHA)
 	if err != nil {
 		return err
 	}
 
-	reran := 0
+	posted := 0
 
 	for _, run := range runs {
-		if !isFailedWorkflowConclusion(run.Conclusion) {
+		if !matches(run.Conclusion) {
 			continue
 		}
 
-		rerunURL := fmt.Sprintf(
-			"https://api.github.com/repos/%s/actions/runs/%d/rerun-failed-jobs",
-			repoFullName,
-			run.ID,
-		)
+		actionURL := fmt.Sprintf("https://api.github.com/repos/%s/actions/runs/%d/%s", repoFullName, run.ID, action)
 
-		rerunReq, err := http.NewRequestWithContext(ctx, http.MethodPost, rerunURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, actionURL, nil)
 		if err != nil {
 			return err
 		}
 
-		rerunReq.Header.Set("Authorization", "Bearer "+c.token)
+		req.Header.Set("Authorization", "Bearer "+c.token)
 
-		rerunResp, err := c.httpClient.Do(rerunReq)
+		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("rerun jobs: %w", err)
+			return fmt.Errorf("%s: %w", action, err)
 		}
 
-		_ = rerunResp.Body.Close()
+		_ = resp.Body.Close()
 
-		if rerunResp.StatusCode != http.StatusCreated {
-			return fmt.Errorf("rerun jobs HTTP %d for run %d", rerunResp.StatusCode, run.ID)
+		if resp.StatusCode != http.StatusCreated {
+			return fmt.Errorf("%s HTTP %d for run %d", action, resp.StatusCode, run.ID)
 		}
 
-		reran++
+		posted++
 	}
 
-	if reran == 0 {
-		return errors.New("no failed workflow runs found to re-run")
+	if posted == 0 {
+		return fmt.Errorf("no workflow runs found to %s", action)
 	}
 
 	return nil

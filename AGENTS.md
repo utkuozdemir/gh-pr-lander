@@ -225,7 +225,11 @@ mergeable"). On a live sample of approved PRs, every green one with a computed
 merge state was `CLEAN` or `BEHIND`, never `BLOCKED`, so this does not hold back
 mergeable PRs. For the reason, `annotateWorkflowRuns` also fetches Actions runs
 for such a PR and counts conclusion `action_required` into
-`AwaitingApprovalRuns`, shown as "workflow awaiting approval". Search results
+`AwaitingApprovalRuns`, shown as "workflow awaiting approval". `w` approves
+them (`POST .../actions/runs/{id}/approve`, through the same
+`postToWorkflowRuns` helper as re-running failed jobs) and is listed in the
+footer only on such a PR. It stays manual on purpose: approving lets a
+contributor's code run in CI. Search results
 often carry `mergeStateStatus: UNKNOWN` (GitHub computes it lazily), and that
 never sets `MergeBlocked`.
 

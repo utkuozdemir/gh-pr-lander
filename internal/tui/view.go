@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -308,7 +309,9 @@ func truncateDisplayWidth(s string, maxWidth int) string {
 }
 
 func (m model) renderFooter() string {
-	keys := []struct{ key, desc string }{
+	type footerKey struct{ key, desc string }
+
+	keys := []footerKey{
 		{"m", "merge"},
 		{"r", "rebase"},
 		{"t", "re-run"},
@@ -319,6 +322,10 @@ func (m model) renderFooter() string {
 		{"o", "open"},
 		{"R", "refresh"},
 		{"q", "quit"},
+	}
+
+	if item, ok := m.selectedItem(); ok && !item.merged && item.pr.AwaitingApprovalRuns > 0 {
+		keys = slices.Insert(keys, 3, footerKey{"w", "approve workflows"})
 	}
 
 	parts := make([]string, len(keys))

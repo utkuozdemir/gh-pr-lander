@@ -292,6 +292,35 @@ func TestFailedWorkflowRunsSummaryCountsRunsAwaitingApproval(t *testing.T) {
 	}
 }
 
+func TestApproveWorkflowRunsApprovesOnlyRunsAwaitingApproval(t *testing.T) {
+	var posted []string
+
+	client := &Client{
+		token: "token",
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.Method == http.MethodPost {
+				posted = append(posted, req.URL.Path)
+
+				return &http.Response{StatusCode: http.StatusCreated, Body: http.NoBody}, nil
+			}
+
+			body := `{"workflow_runs":[` +
+				`{"id":1,"status":"completed","conclusion":"action_required"},` +
+				`{"id":2,"status":"completed","conclusion":"failure"}]}`
+
+			return testJSONResponse(body, nil), nil
+		})},
+	}
+
+	if err := client.ApproveWorkflowRuns(context.Background(), "org/repo", "sha"); err != nil {
+		t.Fatalf("ApproveWorkflowRuns: %v", err)
+	}
+
+	if len(posted) != 1 || posted[0] != "/repos/org/repo/actions/runs/1/approve" {
+		t.Fatalf("unexpected approvals: %v", posted)
+	}
+}
+
 func TestComputeCIStatusTreatsUnfetchedChecksAsPending(t *testing.T) {
 	status, summary := computeCIStatus(prNode{
 		Commits: commitConn{Nodes: []commitNode{{
