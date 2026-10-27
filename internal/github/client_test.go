@@ -271,6 +271,27 @@ func TestFailedWorkflowRunsSummaryCountsRunningRuns(t *testing.T) {
 	}
 }
 
+func TestFailedWorkflowRunsSummaryCountsRunsAwaitingApproval(t *testing.T) {
+	client := &Client{
+		token: "token",
+		httpClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			// A fork's workflow waits for a maintainer to approve it.
+			body := `{"workflow_runs":[{"id":1,"status":"completed","conclusion":"action_required"}]}`
+
+			return testJSONResponse(body, nil), nil
+		})},
+	}
+
+	summary, err := client.FailedWorkflowRunsSummary(context.Background(), "org/repo", "sha")
+	if err != nil {
+		t.Fatalf("FailedWorkflowRunsSummary: %v", err)
+	}
+
+	if summary.AwaitingApproval != 1 || summary.Count != 0 {
+		t.Fatalf("expected 1 awaiting approval and 0 failed, got %d and %d", summary.AwaitingApproval, summary.Count)
+	}
+}
+
 func TestComputeCIStatusTreatsUnfetchedChecksAsPending(t *testing.T) {
 	status, summary := computeCIStatus(prNode{
 		Commits: commitConn{Nodes: []commitNode{{

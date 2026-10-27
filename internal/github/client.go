@@ -160,7 +160,7 @@ func (c *Client) FetchPRs(ctx context.Context, orgs []string) ([]pr.PR, error) {
 		prs = append(prs, p)
 	}
 
-	if err := c.annotateFailedWorkflowRuns(ctx, prs); err != nil {
+	if err := c.annotateWorkflowRuns(ctx, prs); err != nil {
 		return nil, err
 	}
 
@@ -223,16 +223,18 @@ func (c *Client) fetchPRsForOrg(ctx context.Context, org string) ([]pr.PR, error
 	return prs, nil
 }
 
-// annotateFailedWorkflowRuns enriches failed PRs with Actions-API data
-// (failed run count, max attempt, latest update). Runs are fetched in parallel
+// annotateWorkflowRuns enriches failed PRs with Actions-API data (failed run
+// count, max attempt, latest update), and PRs blocked by GitHub with nothing
+// else wrong with the count of runs awaiting approval. Runs are fetched in parallel
 // with bounded concurrency. Each goroutine writes only its own slice index, so
 // no locking is needed. Individual fetch errors are tolerated (best effort).
-func (c *Client) annotateFailedWorkflowRuns(ctx context.Context, prs []pr.PR) error {
+func (c *Client) annotateWorkflowRuns(ctx context.Context, prs []pr.PR) error {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(annotateConcurrency)
 
 	for i := range prs {
-		if prs[i].CIStatus != pr.CIFailed || prs[i].HeadSHA == "" {
+		blocked := prs[i].MergeBlocked && prs[i].OverallStatus == pr.StatusBlocked
+		if prs[i].HeadSHA == "" || (prs[i].CIStatus != pr.CIFailed && !blocked) {
 			continue
 		}
 
@@ -249,6 +251,7 @@ func (c *Client) annotateFailedWorkflowRuns(ctx context.Context, prs []pr.PR) er
 			prs[i].MaxFailedRunAttempt = summary.MaxAttempt
 			prs[i].LatestFailedRunUpdate = summary.LatestUpdatedAt
 			prs[i].RunningWorkflowRuns = summary.Running
+			prs[i].AwaitingApprovalRuns = summary.AwaitingApproval
 
 			return nil
 		})
@@ -393,7 +396,8 @@ func (c *Client) CountMergeComments(
 	return count, lastTime, nil
 }
 
-// FailedWorkflowRunsSummary aggregates the failed Actions runs for a head SHA.
+// FailedWorkflowRunsSummary aggregates the failed Actions runs for a head SHA,
+// and counts the ones awaiting approval.
 func (c *Client) FailedWorkflowRunsSummary(
 	ctx context.Context,
 	repoFullName string,
@@ -409,6 +413,10 @@ func (c *Client) FailedWorkflowRunsSummary(
 	for _, run := range runs {
 		if run.Status != "completed" {
 			summary.Running++
+		}
+
+		if run.Conclusion == "action_required" {
+			summary.AwaitingApproval++
 		}
 
 		if isFailedWorkflowConclusion(run.Conclusion) {

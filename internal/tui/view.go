@@ -128,7 +128,7 @@ func (m model) renderActivePR(p pr.PR, selected bool) string {
 	line2 := prTitleStyle.Render(title)
 
 	base := "Base " + baseIndicator(p)
-	ci := "CI " + ciIndicator(p.CIStatus, p.Checks)
+	ci := "CI " + ciIndicator(p)
 	review := "Review " + reviewIndicator(p.ReviewStatus)
 	auto := m.autoIndicators(p)
 

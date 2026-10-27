@@ -26,6 +26,21 @@ func TestComputeOverallStatusReadyWhenSyncedAndPassing(t *testing.T) {
 	}
 }
 
+func TestComputeOverallStatusKeepsMergeBlockedOutOfReady(t *testing.T) {
+	// Required checks that never started are missing from the rollup, so only
+	// GitHub's merge state shows the PR cannot merge.
+	status := ComputeOverallStatus(PR{
+		BaseStatus:   BaseSynced,
+		CIStatus:     CIPassed,
+		ReviewStatus: ReviewApproved,
+		MergeBlocked: true,
+	})
+
+	if status != StatusBlocked {
+		t.Fatalf("expected StatusBlocked, got %v", status)
+	}
+}
+
 func TestComputeOverallStatusFailedCITrumpsStale(t *testing.T) {
 	status := ComputeOverallStatus(PR{
 		BaseStatus: BaseBehind,

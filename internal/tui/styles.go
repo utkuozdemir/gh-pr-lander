@@ -162,14 +162,18 @@ func baseIndicator(p pr.PR) string {
 	}
 }
 
-func ciIndicator(status pr.CIStatus, checks pr.CheckSummary) string {
-	switch status {
+func ciIndicator(p pr.PR) string {
+	if p.AwaitingApprovalRuns > 0 {
+		return indicatorWarn.Render("⏸ workflow awaiting approval")
+	}
+
+	switch p.CIStatus {
 	case pr.CIPassed:
-		return indicatorPass.Render("✓ " + checks.String())
+		return indicatorPass.Render("✓ " + p.Checks.String())
 	case pr.CIRunning:
-		return indicatorRunning.Render("● " + checks.String())
+		return indicatorRunning.Render("● " + p.Checks.String())
 	case pr.CIFailed:
-		return indicatorFail.Render("✗ " + checks.String())
+		return indicatorFail.Render("✗ " + p.Checks.String())
 	case pr.CINone:
 		return indicatorNone.Render("— no checks")
 	default:

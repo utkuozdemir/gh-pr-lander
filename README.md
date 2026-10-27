@@ -14,6 +14,8 @@ Keep it open in a terminal tab. It polls your open PRs across configured GitHub 
 
 PRs opened by someone else that you took over (rebased, re-signed or added commits to) are listed too, tagged `⇄ @author`. GitHub search can only find them if you commented on, were assigned to, or were mentioned in the PR, so assign yourself when you take one over.
 
+A PR that looks approved and green but that GitHub still blocks from merging shows as `BLOCKED`, and automerge leaves it alone. The usual cause is a community PR whose workflows wait for a maintainer to approve them, shown as `⏸ workflow awaiting approval`. Approve them on GitHub and CI starts.
+
 - `r` rebases. Drops into a real local `git rebase` so your YubiKey signs the commits. Returns to the TUI after a few seconds on success.
 - `m` posts `/m` as a PR comment. The bot does the fast-forward merge.
 - `a` toggles automerge. Posts `/m` automatically when the PR is ready. Gives up after 3 attempts (counted from actual `/m` comments on the PR).

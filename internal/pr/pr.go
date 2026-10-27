@@ -48,7 +48,7 @@ const (
 	StatusStale                        // Behind base, no conflicts — rebase
 	StatusPending                      // CI running, otherwise fine
 	StatusFailed                       // CI failed — re-run or fix
-	StatusBlocked                      // Conflicts or changes requested
+	StatusBlocked                      // Conflicts, changes requested, or blocked by GitHub
 	StatusDraft                        // Draft PR
 )
 
@@ -102,6 +102,10 @@ type PR struct {
 	// BehindUnenforced marks a BaseBehind PR that GitHub still reports as
 	// mergeable, because its base branch does not require being up to date.
 	BehindUnenforced bool
+	// MergeBlocked is set when GitHub reports the merge as blocked by a branch
+	// rule. Required checks that never started, such as a fork's workflows
+	// waiting for a maintainer to approve them, show up only here.
+	MergeBlocked bool
 	// ReviewThreads is the number of inline review comment threads, of which
 	// ResolvedReviewThreads are resolved.
 	ReviewThreads         int
@@ -115,6 +119,10 @@ type PR struct {
 	MaxFailedRunAttempt     int
 	LatestFailedRunUpdate   time.Time
 	RunningWorkflowRuns     int
+	// AwaitingApprovalRuns counts workflow runs from a fork that wait for a
+	// maintainer to approve them. Only fetched for a MergeBlocked PR that
+	// otherwise looks ready.
+	AwaitingApprovalRuns int
 }
 
 // RepoShort is the stable key used to identify a PR everywhere, e.g.
@@ -151,6 +159,10 @@ func ComputeOverallStatus(p PR) OverallStatus {
 	}
 
 	if p.BaseStatus == BaseSynced && (p.CIStatus == CIPassed || p.CIStatus == CINone) {
+		if p.MergeBlocked {
+			return StatusBlocked
+		}
+
 		return StatusReady
 	}
 

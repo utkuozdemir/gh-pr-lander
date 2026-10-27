@@ -210,6 +210,25 @@ only ever push toward `CIRunning`, so they compose without fighting. Tested in
 `internal/tui/auto_test.go` (settling) and `internal/github/client_test.go`
 (rollup state), no network or timing flakiness.
 
+## Required checks that never started (`BLOCKED` but green)
+
+A fork's workflows wait for a maintainer to approve them before they run. Until
+then their required checks are not in `statusCheckRollup` at all: the rollup
+lists only the checks that exist (all green) and its aggregate `state` is
+`SUCCESS`. The GitHub UI shows them as "Expected, waiting for status to be
+reported", but GraphQL has no field for missing required checks (`isRequired`
+is only on contexts that exist). The only signal is `mergeStateStatus: BLOCKED`,
+so `prFromNode` sets `MergeBlocked`, and `ComputeOverallStatus` turns a PR that
+would otherwise be `StatusReady` into `StatusBlocked`. Automerge and manual `m`
+both need `StatusReady`, so no `/m` goes out (the bot answers "pr not
+mergeable"). On a live sample of approved PRs, every green one with a computed
+merge state was `CLEAN` or `BEHIND`, never `BLOCKED`, so this does not hold back
+mergeable PRs. For the reason, `annotateWorkflowRuns` also fetches Actions runs
+for such a PR and counts conclusion `action_required` into
+`AwaitingApprovalRuns`, shown as "workflow awaiting approval". Search results
+often carry `mergeStateStatus: UNKNOWN` (GitHub computes it lazily), and that
+never sets `MergeBlocked`.
+
 ## Failed check, but nothing to re-run yet
 
 The GraphQL rollup and the Actions REST API disagree for a while after a job
@@ -391,6 +410,7 @@ the generated assignment in real bash to prove it stays literal.
   last autorerun time.** Don't add derived state there, derive it from the API.
 - **This is a personal repo, not a Siderolabs one**, even though the tool serves
   the Siderolabs workflow. Commits are not GPG-signed (no YubiKey touch) and
-  only carry the DCO signoff (`git commit -s`). The title is
+  only carry the DCO signoff. The global git config signs by default, so commit
+  with `git commit --no-gpg-sign -s`. The title is
   `type: imperative summary`, and the body is prose with each paragraph on a
   single line.

@@ -54,6 +54,7 @@ func prFromNode(node prNode) pr.PR {
 		p.BehindUnenforced = !strings.EqualFold(node.MergeStateStatus, "UNKNOWN")
 	}
 
+	p.MergeBlocked = strings.EqualFold(node.MergeStateStatus, "BLOCKED")
 	p.CIStatus, p.Checks = computeCIStatus(node)
 	p.ReviewStatus = computeReviewStatus(node)
 	p.OverallStatus = pr.ComputeOverallStatus(p)

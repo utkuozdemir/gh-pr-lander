@@ -142,6 +142,9 @@ type WorkflowSummary struct {
 	// has no conclusion until all its other jobs finish, and only then can its
 	// failed jobs be re-run.
 	Running int
+	// AwaitingApproval counts runs from a fork that wait for a maintainer to
+	// approve them. Their checks are missing from the rollup until then.
+	AwaitingApproval int
 }
 
 // PRState is the merge state of a PR, read from the REST API.
