@@ -1,0 +1,136 @@
+{{define "page"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Pull requests</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --text: #1c2128; --muted: #636c76; --line: #d8dee4;
+  --ok: #1a7f37; --warn: #9a6700; --fail: #cf222e; --info: #0969da; --none: #636c76;
+  --on: #0969da; --on-text: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8b949e; --line: #30363d;
+    --ok: #3fb950; --warn: #d29922; --fail: #f85149; --info: #58a6ff; --none: #8b949e;
+    --on: #1f6feb; --on-text: #ffffff;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 760px; margin: 0 auto; padding: 12px 16px 40px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 12px; }
+h1 { font-size: 18px; margin: 0; }
+h2 { font-size: 13px; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.meta { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+.flash { border: 1px solid var(--line); border-left: 4px solid var(--info); background: var(--card);
+  padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; overflow-wrap: anywhere; }
+.flash.err { border-left-color: var(--fail); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+.top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.ref { font-size: 13px; color: var(--muted); text-decoration: none; overflow-wrap: anywhere; }
+.ref b { color: var(--text); }
+.title { margin: 4px 0 8px; font-weight: 600; overflow-wrap: anywhere; }
+.badge { font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid currentColor; white-space: nowrap; }
+.marks { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted); }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .fail { color: var(--fail); }
+.info { color: var(--info); } .none { color: var(--none); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.actions form { margin: 0; }
+button {
+  font: inherit; font-size: 14px; min-height: 40px; padding: 0 14px; border-radius: 8px;
+  border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer;
+}
+button[aria-pressed="true"] { background: var(--on); border-color: var(--on); color: var(--on-text); }
+button.go { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+button:disabled { opacity: .4; cursor: default; }
+.empty { color: var(--muted); padding: 24px 0; text-align: center; }
+</style>
+<script src="/static/htmx.min.js"></script>
+</head>
+<body>
+<main id="main" hx-target="#main" hx-swap="innerHTML">
+{{template "main" .}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "main"}}
+<header>
+  <h1>Pull requests</h1>
+  <form hx-post="/refresh"><button>Refresh</button></form>
+</header>
+{{if .Flash.Text}}<div class="flash{{if .Flash.Err}} err{{end}}" role="status">{{.Flash.Text}}</div>{{end}}
+{{template "list" .}}
+{{end}}
+
+{{define "list"}}
+<div id="list" hx-get="/prs" hx-trigger="every 10s" hx-target="this" hx-swap="outerHTML">
+  {{if .FetchErr}}<div class="flash err">Could not reach GitHub: {{.FetchErr}}</div>{{end}}
+  <div class="meta">Updated {{.Fetched}}</div>
+
+  {{range .PRs}}
+  <article class="card">
+    <div class="top">
+      <a class="ref" href="{{.URL}}" target="_blank" rel="noopener">{{.Repo}}<b>#{{.Number}}</b></a>
+      <span class="badge {{.Badge.Tone}}">{{.Badge.Text}}</span>
+    </div>
+    <div class="title">{{.Title}}</div>
+    <div class="marks">
+      <span>Base <span class="{{.Base.Tone}}">{{.Base.Text}}</span></span>
+      <span>CI <span class="{{.CI.Tone}}">{{.CI.Text}}</span></span>
+      <span>Review <span class="{{.Review.Tone}}">{{.Review.Text}}</span></span>
+      {{if .MergeGaveUp}}<span class="fail">merge gave up on this commit</span>{{end}}
+      {{if .RerunGaveUp}}<span class="fail">re-run gave up on this commit</span>{{end}}
+    </div>
+    <div class="actions">
+      <form hx-post="/toggle">
+        <input type="hidden" name="key" value="{{.Key}}">
+        <input type="hidden" name="sha" value="{{.SHA}}">
+        <input type="hidden" name="kind" value="automerge">
+        <button aria-pressed="{{.AutoMerge}}">Automerge {{if .AutoMerge}}on{{else}}off{{end}}</button>
+      </form>
+      <form hx-post="/toggle">
+        <input type="hidden" name="key" value="{{.Key}}">
+        <input type="hidden" name="sha" value="{{.SHA}}">
+        <input type="hidden" name="kind" value="autorerun">
+        <button aria-pressed="{{.AutoRerun}}">Autorerun {{if .AutoRerun}}on{{else}}off{{end}}</button>
+      </form>
+      <form hx-post="/merge" hx-confirm="Merge {{.Key}} now?">
+        <input type="hidden" name="key" value="{{.Key}}">
+        <input type="hidden" name="sha" value="{{.SHA}}">
+        <button class="go" {{if not .CanMerge}}disabled{{end}}>Merge now</button>
+      </form>
+      <form hx-post="/rerun">
+        <input type="hidden" name="key" value="{{.Key}}">
+        <input type="hidden" name="sha" value="{{.SHA}}">
+        <button {{if not .CanRerun}}disabled{{end}}>Re-run failed</button>
+      </form>
+    </div>
+  </article>
+  {{else}}
+  <div class="empty">No open pull requests.</div>
+  {{end}}
+
+  {{if .Gone}}
+  <h2>Recently merged or closed</h2>
+  {{range .Gone}}
+  <article class="card">
+    <div class="top">
+      <a class="ref" href="{{.URL}}" target="_blank" rel="noopener">{{.Repo}}<b>#{{.Number}}</b></a>
+      <span class="badge {{.Badge.Tone}}">{{.Badge.Text}}</span>
+    </div>
+    <div class="title">{{.Title}}</div>
+    <div class="marks"><span>{{.Ago}}</span></div>
+  </article>
+  {{end}}
+  {{end}}
+</div>
+{{end}}

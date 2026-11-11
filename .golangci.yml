@@ -13,6 +13,7 @@ linters:
     - mnd # magic numbers are sometimes ok, this linter is too noisy
     - nonamedreturns # named returns are useful to read errors in defer statements
     - gomodguard # deprecated
+    - contextcheck # a merge or re-run must outlive the request or loop that started it, so it gets its own context
     # Bubble Tea / GitHub-client idioms that the following linters fight:
     - ireturn # the Bubble Tea API is built around returning tea.Model / tea.Cmd interfaces
     - recvcheck # Update/View must be value receivers, state helpers must be pointer receivers

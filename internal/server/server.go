@@ -1,0 +1,344 @@
+// Package server is the front end with no terminal: an always-on process that
+// runs the engine's automation and serves a small page to flip its switches
+// from a phone or a browser. It does everything that needs no signing. Rebase
+// stays with the terminal app.
+package server
+
+import (
+	"context"
+	"embed"
+	"errors"
+	"html/template"
+	"log/slog"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/utkuozdemir/sidero-rebaser/internal/config"
+	"github.com/utkuozdemir/sidero-rebaser/internal/engine"
+	"github.com/utkuozdemir/sidero-rebaser/internal/github"
+	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+)
+
+//go:embed page.html static/htmx.min.js
+var assets embed.FS
+
+// Server owns the engine state. The fetch loop and the HTTP handlers both use
+// it, so every access holds mu. GitHub calls run outside the lock.
+type Server struct {
+	mu        sync.Mutex
+	state     *engine.State
+	lastFetch time.Time
+	fetchErr  error
+
+	refresh  func()        // ask the poller to fetch immediately
+	followUp time.Duration // how long after an action to fetch once more
+	tmpl     *template.Template
+
+	// works tracks the GitHub calls and timers started by the fetch loop, so
+	// Run can wait for them. stop tells the timers to give up.
+	works sync.WaitGroup
+	stop  chan struct{}
+}
+
+// New builds a server on the switches saved in the config's data directory.
+func New(cfg config.Config, client engine.Client, refresh func()) (*Server, error) {
+	state, err := engine.New(cfg, client)
+	if err != nil {
+		return nil, err
+	}
+
+	tmpl, err := template.ParseFS(assets, "page.html")
+	if err != nil {
+		return nil, err
+	}
+
+	return &Server{
+		state:    state,
+		refresh:  refresh,
+		followUp: 15 * time.Second,
+		tmpl:     tmpl,
+		stop:     make(chan struct{}),
+	}, nil
+}
+
+// Run feeds every fetch result into the engine and starts the merges and
+// re-runs automation asks for. It returns when ctx is done, after the GitHub
+// calls it started have finished.
+func (s *Server) Run(ctx context.Context, results <-chan github.FetchResult) error {
+	defer s.works.Wait()
+	defer close(s.stop)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case res, ok := <-results:
+			if !ok {
+				return nil
+			}
+
+			s.handleFetch(res)
+		}
+	}
+}
+
+func (s *Server) handleFetch(res github.FetchResult) {
+	s.mu.Lock()
+
+	if res.Err != nil {
+		slog.Error("failed to fetch PRs", "error", res.Err)
+		s.fetchErr = res.Err
+		s.mu.Unlock()
+
+		return
+	}
+
+	s.fetchErr = nil
+	s.lastFetch = time.Now()
+
+	// A PR taken over from someone else lives on their fork, where they can
+	// push a commit nobody here has looked at. Nothing is here to look while
+	// the server runs unattended, so it leaves those PRs to the terminal app.
+	own := make([]pr.PR, 0, len(res.PRs))
+
+	for _, p := range res.PRs {
+		if p.TakenOverFrom == "" {
+			own = append(own, p)
+		}
+	}
+
+	// A failed save is logged by the engine. The switches still hold in memory.
+	works, _ := s.state.Apply(own)
+	works = append(works, s.state.AutoWorks()...)
+
+	s.mu.Unlock()
+
+	for _, work := range works {
+		s.works.Go(func() {
+			if s.finish(work()) {
+				s.refreshSoon()
+			}
+		})
+	}
+}
+
+// finish hands a result back to the engine. It reports whether the PR list is
+// worth fetching again.
+func (s *Server) finish(res engine.Result) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	switch res := res.(type) {
+	case engine.MergeResult:
+		s.state.MergeDone(res)
+
+		return true
+	case engine.RerunResult:
+		s.state.RerunDone(res)
+
+		return true
+	case engine.AutoRerunResult:
+		_ = s.state.AutoRerunDone(res)
+
+		return res.Reran
+	case engine.MergedCheckResult:
+		s.state.MergedCheckDone(res)
+	}
+
+	return false
+}
+
+// refreshSoon fetches now and once more a little later, since GitHub takes a
+// moment to show the effect of a merge or a re-run.
+func (s *Server) refreshSoon() {
+	s.refresh()
+
+	s.works.Go(func() {
+		select {
+		case <-s.stop:
+		case <-time.After(s.followUp):
+			s.refresh()
+		}
+	})
+}
+
+// Handler returns the page and its actions.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /{$}", s.handlePage)
+	mux.HandleFunc("GET /prs", s.handleList)
+	mux.HandleFunc("POST /toggle", s.handleToggle)
+	mux.HandleFunc("POST /merge", s.handleMerge)
+	mux.HandleFunc("POST /rerun", s.handleRerun)
+	mux.HandleFunc("POST /refresh", s.handleRefresh)
+	mux.Handle("GET /static/", http.FileServerFS(assets))
+
+	// The page has no login, so a request that another website makes through
+	// the owner's browser must not be able to start a merge.
+	return http.NewCrossOriginProtection().Handler(mux)
+}
+
+func (s *Server) handlePage(w http.ResponseWriter, _ *http.Request) {
+	s.render(w, "page", flash{})
+}
+
+func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {
+	s.render(w, "list", flash{})
+}
+
+func (s *Server) handleRefresh(w http.ResponseWriter, _ *http.Request) {
+	s.refresh()
+	s.render(w, "main", flash{Text: "Refreshing"})
+}
+
+func (s *Server) handleToggle(w http.ResponseWriter, r *http.Request) {
+	kind := engine.Kind(r.FormValue("kind"))
+	if kind != engine.Automerge && kind != engine.Autorerun {
+		http.Error(w, "unknown switch", http.StatusBadRequest)
+
+		return
+	}
+
+	s.mu.Lock()
+
+	p, err := s.find(r)
+	if err != nil {
+		s.mu.Unlock()
+		s.render(w, "main", flash{Text: err.Error(), Err: true})
+
+		return
+	}
+
+	enabled, work, err := s.state.Toggle(kind, p)
+	s.mu.Unlock()
+
+	if err != nil {
+		s.render(w, "main", flash{Text: "Failed to save the switch: " + err.Error(), Err: true})
+
+		return
+	}
+
+	if work != nil {
+		s.works.Go(func() {
+			if s.finish(work()) {
+				s.refreshSoon()
+			}
+		})
+	}
+
+	state := "off"
+	if enabled {
+		state = "on"
+	}
+
+	s.render(w, "main", flash{Text: string(kind) + " " + state + " for " + p.RepoShort()})
+}
+
+func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+
+	p, err := s.find(r)
+	if err == nil {
+		err = s.state.CheckMerge(p)
+	}
+
+	var work engine.Work
+	if err == nil {
+		work = s.state.MergeWork(p, false)
+	}
+
+	s.mu.Unlock()
+
+	if err != nil {
+		s.render(w, "main", flash{Text: err.Error(), Err: true})
+
+		return
+	}
+
+	res, _ := work().(engine.MergeResult)
+	s.finish(res)
+	s.refreshSoon()
+
+	if res.Err != nil {
+		s.render(w, "main", flash{Text: "Failed to merge " + p.RepoShort() + ": " + res.Err.Error(), Err: true})
+
+		return
+	}
+
+	s.render(w, "main", flash{Text: "Merged " + p.RepoShort()})
+}
+
+func (s *Server) handleRerun(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+
+	p, err := s.find(r)
+	if err == nil {
+		err = s.state.StartRerun(p)
+	}
+
+	var work engine.Work
+	if err == nil {
+		work = s.state.RerunWork(p)
+	}
+
+	s.mu.Unlock()
+
+	if err != nil {
+		s.render(w, "main", flash{Text: err.Error(), Err: true})
+
+		return
+	}
+
+	res, _ := work().(engine.RerunResult)
+	s.finish(res)
+	s.refreshSoon()
+
+	if res.Err != nil {
+		s.render(w, "main", flash{Text: "Re-run failed: " + res.Err.Error(), Err: true})
+
+		return
+	}
+
+	s.render(w, "main", flash{Text: "Re-running failed jobs on " + p.RepoShort()})
+}
+
+var (
+	errGone    = errors.New("that pull request is no longer in the list")
+	errChanged = errors.New("that pull request got a new commit since this page loaded, look again")
+)
+
+// find returns the PR a form names, as of the latest fetch. The form carries
+// the head commit the page showed: a page left open on a phone can be hours
+// old, and an action must not land on a commit the owner has not seen. The
+// caller holds mu.
+func (s *Server) find(r *http.Request) (pr.PR, error) {
+	key, sha := r.FormValue("key"), r.FormValue("sha")
+
+	for _, p := range s.state.PRs {
+		if p.RepoShort() != key {
+			continue
+		}
+
+		if p.HeadSHA != sha {
+			return pr.PR{}, errChanged
+		}
+
+		return p, nil
+	}
+
+	return pr.PR{}, errGone
+}
+
+func (s *Server) render(w http.ResponseWriter, name string, f flash) {
+	data := s.snapshot()
+	data.Flash = f
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+
+	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
+		slog.Error("failed to render the page", "template", name, "error", err)
+	}
+}

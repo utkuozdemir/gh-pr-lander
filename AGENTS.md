@@ -29,11 +29,12 @@ The code is split into small packages under `internal/`. The dependency
 direction is strict and acyclic:
 
 ```
-main  ──>  tui  ──>  engine ──> github ──> pr
-                │        ├──>  store
-                │        ├──>  notify
-                │        └──>  config
-                └──>  git ──> pr
+main  ──>  tui     ──>  engine ──> github ──> pr
+      │         │        ├──>  store
+      │         │        ├──>  notify
+      │         │        └──>  config
+      │         └──>  git ──> pr
+      └──>  server  ──>  engine
         github ──> pr,  config-independent
 ```
 
@@ -72,8 +73,13 @@ main  ──>  tui  ──>  engine ──> github ──> pr
   styles, and what needs the YubiKey (rebase and the autorebase queue in
   `rebase.go`). The model embeds `*engine.State`, wraps each `engine.Work` in
   a `tea.Cmd` (`workCmd`), and turns results into status lines.
+- **`internal/server`** — the front end with no terminal (`sidero-rebaser
+  serve`): a fetch loop that feeds the engine and starts what automation asks
+  for, plus the page (`page.html`, Go templates and an embedded htmx file).
+  See "The server and the page" below.
 - **`main.go`** — thin wiring only: parse flags, build the client and poller,
-  run the program and the poller together under an errgroup.
+  run the program and the poller together under an errgroup. `serve.go` does
+  the same for the server.
 
 ### Interfaces live on the consumer side
 
@@ -140,6 +146,68 @@ run in parallel via `errgroup` and Actions-API enrichment runs with a bounded
 Each parallel worker writes only its own slice index, so no locking is needed.
 If you add concurrency, follow this: take a `context`, use `errgroup`, `Wait`,
 and propagate cancellation.
+
+## The server and the page
+
+**Why it exists.** `/m` could be commented from a phone. The ref update can
+only be sent from where the tool runs, so the owner lost merging while away
+from the laptop. The server is the tool running always-on (a home cluster) with
+a page to ask it for things. See `docs/adr/0001` for why the request goes
+through a page and not through a mark on the PR, and `GLOSSARY.md` for the
+words (terminal app, server, page).
+
+**What it does and does not.** Everything that needs no signing: automerge,
+autorerun, merge now, re-run, deleting the owner's fork branch after a merge.
+Never a rebase, and it has no autorebase queue.
+
+**How it uses the engine.** `Server` owns one `engine.State` behind a
+`sync.Mutex`. Two things touch it: the fetch loop (`Run` → `handleFetch`) and
+the HTTP handlers. GitHub calls always run outside the lock: the engine hands
+back a `Work`, the server runs it, then takes the lock again to feed the result
+into `finish`. Automation's work runs in goroutines tracked by `works`
+(`sync.WaitGroup`), and `Run` waits for them on shutdown, so a merge in flight
+finishes. A merge or re-run asked for from the page runs inside the request, so
+the page can show the real outcome.
+
+**Things that are deliberate:**
+
+- **The terminal app and the server do not know about each other.** Each has
+  its own `db.yaml` (the server's default data dir is
+  `~/.sidero-rebaser/server` so the two never share a file). Both acting on
+  one PR is safe: a second non-forced ref update changes nothing, and a
+  re-run started by the other one is covered by the "re-runs started
+  elsewhere" guard.
+- **Only the owner's own PRs.** `handleFetch` drops taken-over PRs
+  (`TakenOverFrom != ""`). The branch protection of omni and talos does not
+  dismiss approvals on a new push, so a contributor could push a commit to an
+  approved PR and unattended automerge would merge it unseen.
+- **Every form carries the head SHA the page showed** and `find` refuses the
+  action if the PR has moved on. A page left open on a phone can be hours old,
+  and "merge now" must not land on a commit the owner has not looked at.
+- **No login yet** (issue #9). The page is meant for a LAN or VPN only.
+  `http.NewCrossOriginProtection` (stdlib) refuses state-changing requests
+  from other sites, so a web page the owner visits cannot post to it.
+- **Logs go to stderr and desktop notifications are off** in `serve`, since the
+  terminal app's log file and `osascript` make no sense in a pod.
+- **The token is read once at startup** (`--token-file`, trimmed). A rotated
+  Secret needs a pod restart, which the deployment handles (the 1Password
+  operator's auto-restart annotation in the owner's cluster).
+- **`contextcheck` is disabled** because a merge or re-run deliberately gets
+  its own context: it must not be cancelled when the phone drops the
+  connection or the process is asked to stop.
+
+**Page mechanics.** `page.html` defines three templates: `page` (the document),
+`main` (header, flash message, list) and `list`. The list polls `GET /prs`
+every 10s and swaps itself. A `POST` answers with `main`, so the flash message
+and the list update together. htmx is embedded (`static/htmx.min.js`, version
+2.0.4) so the page loads nothing from other sites. The page is drawn from
+`snapshot()`, a copy taken under the lock, so templates never touch the engine.
+
+**Shipping.** `Dockerfile` builds a distroless nonroot image and
+`.github/workflows/image.yml` pushes it to `ghcr.io/utkuozdemir/sidero-rebaser`
+for both amd64 and arm64 when a `v*` tag is pushed. The repo is private, so the
+package starts private too and has to be made public once in the package
+settings. Deployment manifests live in the owner's homelab repo, not here.
 
 ## Merging: fast-forward through the refs API
 
