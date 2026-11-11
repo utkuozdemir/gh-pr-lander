@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/utkuozdemir/sidero-rebaser/internal/config"
+	"github.com/utkuozdemir/sidero-rebaser/internal/engine"
 	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
 )
 
@@ -26,9 +27,11 @@ func queueModel(t *testing.T, prs []pr.PR, order map[string]int) model {
 	t.Helper()
 
 	return model{
-		config:      config.Config{DataDir: t.TempDir()},
-		prs:         prs,
-		autoRebase:  order,
+		State: &engine.State{
+			Config:     config.Config{DataDir: t.TempDir()},
+			PRs:        prs,
+			AutoRebase: order,
+		},
 		rebaseState: map[string]autoRebaseState{},
 	}
 }
@@ -128,7 +131,7 @@ func TestAutoRebaseDoesNotRepeatUntilGitHubCatchesUp(t *testing.T) {
 	}
 
 	// Behind again on a new commit: someone merged in the meantime.
-	m.prs[0].HeadSHA = "rebased"
+	m.PRs[0].HeadSHA = "rebased"
 	if got := nextKey(m); got != "org/repo#1" {
 		t.Fatalf("expected a rebase of the new commit, got %q", got)
 	}
@@ -142,7 +145,7 @@ func TestAutoRebaseFailurePausesTheQueueUntilRetried(t *testing.T) {
 	m.rebasing = "org/repo#1"
 
 	updated, _ := m.handleAutoRebaseResult(autoRebaseResultMsg{
-		pr:     m.prs[0],
+		pr:     m.PRs[0],
 		output: "Rebasing (1/1)error: gpg failed to sign the data:\nerror: failed to write commit object\n",
 		err:    errors.New("exit status 1"),
 	})
@@ -153,7 +156,7 @@ func TestAutoRebaseFailurePausesTheQueueUntilRetried(t *testing.T) {
 		t.Fatalf("expected no rebase after a failure, %q started", m.rebasing)
 	}
 
-	if out := m.renderActivePR(m.prs[0], false); !strings.Contains(out, "rebase failed: signing failed") {
+	if out := m.renderActivePR(m.PRs[0], false); !strings.Contains(out, "rebase failed: signing failed") {
 		t.Fatalf("expected the failure reason in %q", out)
 	}
 
@@ -163,7 +166,7 @@ func TestAutoRebaseFailurePausesTheQueueUntilRetried(t *testing.T) {
 	updated, _ = m.toggleAutoRebase()
 	m = updated.(model)
 
-	if _, on := m.autoRebase["org/repo#1"]; !on || m.rebasing != "org/repo#1" {
+	if _, on := m.AutoRebase["org/repo#1"]; !on || m.rebasing != "org/repo#1" {
 		t.Fatalf("expected b to retry #1, rebasing %q", m.rebasing)
 	}
 }
@@ -171,7 +174,7 @@ func TestAutoRebaseFailurePausesTheQueueUntilRetried(t *testing.T) {
 func TestAutoRebaseFailureClearsOnNewCommit(t *testing.T) {
 	m := queueModel(t, []pr.PR{queuePR(1, pr.BaseBehind)}, map[string]int{"org/repo#1": 1})
 
-	updated, _ := m.handleAutoRebaseResult(autoRebaseResultMsg{pr: m.prs[0], err: errors.New("exit status 1")})
+	updated, _ := m.handleAutoRebaseResult(autoRebaseResultMsg{pr: m.PRs[0], err: errors.New("exit status 1")})
 	m = updated.(model)
 
 	if got := nextKey(m); got != "" {
@@ -179,7 +182,7 @@ func TestAutoRebaseFailureClearsOnNewCommit(t *testing.T) {
 	}
 
 	// A manual rebase or an outside push moves the head.
-	m.prs[0].HeadSHA = "pushed"
+	m.PRs[0].HeadSHA = "pushed"
 	if got := nextKey(m); got != "org/repo#1" {
 		t.Fatalf("expected the new commit to be rebased, got %q", got)
 	}
@@ -243,7 +246,7 @@ func TestToggleAutoRebaseAppendsToQueue(t *testing.T) {
 	updated, _ = m.toggleAutoRebase()
 	m = updated.(model)
 
-	if _, on := m.autoRebase["org/repo#2"]; on {
+	if _, on := m.AutoRebase["org/repo#2"]; on {
 		t.Fatal("expected autorebase to be off again")
 	}
 }
@@ -266,11 +269,11 @@ func TestRenderShowsQueuePosition(t *testing.T) {
 	)
 	m.width = 120
 
-	if out := m.renderActivePR(m.prs[0], false); !strings.Contains(out, "▶ 1/2") {
+	if out := m.renderActivePR(m.PRs[0], false); !strings.Contains(out, "▶ 1/2") {
 		t.Fatalf("expected the active marker in %q", out)
 	}
 
-	if out := m.renderActivePR(m.prs[1], false); !strings.Contains(out, "⏳ 2/2") {
+	if out := m.renderActivePR(m.PRs[1], false); !strings.Contains(out, "⏳ 2/2") {
 		t.Fatalf("expected the waiting marker in %q", out)
 	}
 }
@@ -291,7 +294,7 @@ func TestReorderDuringRebaseDoesNotStartASecondOne(t *testing.T) {
 	}
 
 	// #1 succeeds, and the next fetch still shows both old heads as behind.
-	updated, _ = m.handleAutoRebaseResult(autoRebaseResultMsg{pr: m.prs[0]})
+	updated, _ = m.handleAutoRebaseResult(autoRebaseResultMsg{pr: m.PRs[0]})
 	m = updated.(model)
 
 	if got := nextKey(m); got != "" {
@@ -309,14 +312,14 @@ func TestFlakyFailureUnderAutorerunKeepsTheQueue(t *testing.T) {
 		[]pr.PR{flaky, queuePR(2, pr.BaseBehind)},
 		map[string]int{"org/repo#1": 1, "org/repo#2": 2},
 	)
-	m.autoRerun = map[string]bool{"org/repo#1": true}
+	m.AutoRerun = map[string]bool{"org/repo#1": true}
 
 	if got := nextKey(m); got != "" {
 		t.Fatalf("expected #1 to hold the queue while autorerun handles it, got %q", got)
 	}
 
 	// Without an Actions run behind the failure, autorerun cannot help.
-	m.prs[0].FailedWorkflowRuns = 0
+	m.PRs[0].FailedWorkflowRuns = 0
 	if got := nextKey(m); got != "org/repo#2" {
 		t.Fatalf("expected the queue to move on to #2, got %q", got)
 	}
@@ -324,8 +327,8 @@ func TestFlakyFailureUnderAutorerunKeepsTheQueue(t *testing.T) {
 
 func TestManualRebaseReservesTheClone(t *testing.T) {
 	m := queueModel(t, []pr.PR{queuePR(1, pr.BaseBehind)}, map[string]int{"org/repo#1": 1})
-	m.prs[0].RepoOwner, m.prs[0].RepoName = "org", "repo"
-	m.prs[0].HeadRepoOwner, m.prs[0].HeadRepoName = "me", "repo"
+	m.PRs[0].RepoOwner, m.PRs[0].RepoName = "org", "repo"
+	m.PRs[0].HeadRepoOwner, m.PRs[0].HeadRepoName = "me", "repo"
 
 	updated, cmd := m.doRebase()
 	m = updated.(model)

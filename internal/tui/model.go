@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
-	"sort"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -18,20 +17,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/utkuozdemir/sidero-rebaser/internal/config"
+	"github.com/utkuozdemir/sidero-rebaser/internal/engine"
 	"github.com/utkuozdemir/sidero-rebaser/internal/git"
 	"github.com/utkuozdemir/sidero-rebaser/internal/github"
-	"github.com/utkuozdemir/sidero-rebaser/internal/notify"
 	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
-	"github.com/utkuozdemir/sidero-rebaser/internal/store"
 )
-
-// mergedPR tracks a PR that disappeared from the open-PR search.
-type mergedPR struct {
-	PR        pr.PR
-	GoneAt    time.Time
-	Confirmed bool // API check completed
-	Merged    bool // true = merged, false = closed without merge
-}
 
 // displayItem is one row in the combined active+merged list.
 type displayItem struct {
@@ -41,13 +31,13 @@ type displayItem struct {
 }
 
 type model struct {
-	config  config.Config
-	client  Client
+	// The pull requests, the automation switches and everything else that
+	// needs no terminal live in the engine, shared with the server.
+	*engine.State
+
 	results <-chan github.FetchResult
 	refresh func() // ask the poller to fetch immediately
 
-	prs       []pr.PR
-	prevPRs   []pr.PR
 	cursor    int
 	width     int
 	height    int
@@ -57,44 +47,10 @@ type model struct {
 	status    string
 	spinner   spinner.Model
 
-	lastRerun      map[string]time.Time // manual rerun cooldown
-	autoMerge      map[string]bool      // enabled flag, persisted in db.yaml
-	autoRerun      map[string]bool      // enabled flag, persisted in db.yaml
-	lastAutoRerun  map[string]time.Time // persisted auto-rerun cooldown
-	mergeFailed    map[string]bool      // discovered from API, in-memory
-	rerunFailed    map[string]bool      // discovered from API, in-memory
-	lastAutoCheck  map[string]time.Time // cooldown gate to avoid API spam
-	recentlyMerged map[string]*mergedPR // PRs that disappeared (merged/closed)
-
-	autoRebase  map[string]int             // queue order, persisted in db.yaml
 	rebaseState map[string]autoRebaseState // attempts and guards, in-memory
 	rebasing    string                     // PR with a background rebase running
 
-	// rerunInFlight guards against GitHub momentarily reporting "all checks
-	// passed" right after a re-run is triggered (issue #1). While a PR is in
-	// flight, a transient passed state is treated as still-running so automerge
-	// does not fire a spurious merge. Keyed by PR; value is the trigger time and
-	// the head SHA at that moment.
-	rerunInFlight    map[string]time.Time
-	rerunInFlightSHA map[string]string
-
-	// checkBaseline guards against GitHub momentarily reporting an incomplete,
-	// all-green check set right after an external rebase+push, before the new
-	// commit's required checks have registered (issue #7). Keyed by PR.
-	checkBaseline map[string]checkBaseline
-
 	quitting bool
-}
-
-// checkBaseline remembers, per PR, the head SHA we last saw, when we first saw
-// it, the high-water check count observed on it, and the high-water count on the
-// SHA before it. A new commit whose current check count is below the previous
-// commit's count is still settling.
-type checkBaseline struct {
-	sha          string
-	firstSeen    time.Time
-	maxTotal     int
-	prevMaxTotal int
 }
 
 // NewModel builds the initial TUI model. results/refresh come from a
@@ -105,7 +61,7 @@ func NewModel(cfg config.Config, client Client, results <-chan github.FetchResul
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(colorCyan)
 
-	db, err := store.Load(cfg.DataDir)
+	state, err := engine.New(cfg, client)
 	status := ""
 
 	if err != nil {
@@ -114,26 +70,13 @@ func NewModel(cfg config.Config, client Client, results <-chan github.FetchResul
 	}
 
 	return model{
-		config:           cfg,
-		client:           client,
-		results:          results,
-		refresh:          refresh,
-		loading:          true,
-		status:           status,
-		spinner:          s,
-		lastRerun:        make(map[string]time.Time),
-		autoMerge:        db.AutoMerge,
-		autoRerun:        db.AutoRerun,
-		lastAutoRerun:    db.AutoRerunLast,
-		autoRebase:       db.AutoRebase,
-		rebaseState:      make(map[string]autoRebaseState),
-		mergeFailed:      make(map[string]bool),
-		rerunFailed:      make(map[string]bool),
-		lastAutoCheck:    make(map[string]time.Time),
-		recentlyMerged:   make(map[string]*mergedPR),
-		rerunInFlight:    make(map[string]time.Time),
-		rerunInFlightSHA: make(map[string]string),
-		checkBaseline:    make(map[string]checkBaseline),
+		State:       state,
+		results:     results,
+		refresh:     refresh,
+		loading:     true,
+		status:      status,
+		spinner:     s,
+		rebaseState: make(map[string]autoRebaseState),
 	}
 }
 
@@ -154,10 +97,10 @@ func (m *model) triggerRefresh() {
 
 // displayItems returns active PRs followed by recently merged PRs as one list.
 func (m model) displayItems() []displayItem {
-	merged := m.sortedMerged()
-	items := make([]displayItem, 0, len(m.prs)+len(merged))
+	merged := m.SortedMerged()
+	items := make([]displayItem, 0, len(m.PRs)+len(merged))
 
-	for _, p := range m.prs {
+	for _, p := range m.PRs {
 		items = append(items, displayItem{pr: p})
 	}
 
@@ -166,24 +109,6 @@ func (m model) displayItems() []displayItem {
 	}
 
 	return items
-}
-
-func (m model) sortedMerged() []*mergedPR {
-	now := time.Now()
-
-	var result []*mergedPR
-
-	for _, mp := range m.recentlyMerged {
-		if now.Sub(mp.GoneAt) < m.config.MergedDisplayDuration {
-			result = append(result, mp)
-		}
-	}
-
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].GoneAt.After(result[j].GoneAt)
-	})
-
-	return result
 }
 
 func (m model) selectedItem() (displayItem, bool) {
@@ -230,13 +155,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.err = nil
-		m.prevPRs = m.prs
-		m.prs = m.applyChecksSettling(m.applyRerunSettling(msg.prs))
 		m.lastFetch = time.Now()
 
-		m.checkTransitions()
-		deleteCmds := m.detectMerged()
-		m = m.cleanupAuto()
+		mergedChecks, err := m.Apply(msg.prs)
+		if err != nil {
+			m.status = errorStyle.Render("✗ Failed to save db.yaml: " + err.Error())
+		}
+
+		// The engine drops the queue entry of a PR that is gone.
+		for key := range m.rebaseState {
+			if _, queued := m.AutoRebase[key]; !queued {
+				delete(m.rebaseState, key)
+			}
+		}
 
 		// Clamp cursor to combined list.
 		items := m.displayItems()
@@ -244,23 +175,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = max(0, len(items)-1)
 		}
 
-		cmds = append(cmds, m.autoCmds()...)
+		cmds = append(cmds, workCmds(m.AutoWorks())...)
 		cmds = append(cmds, m.autoRebaseCmd())
-		cmds = append(cmds, deleteCmds...)
+		cmds = append(cmds, workCmds(mergedChecks)...)
 
 		return m, tea.Batch(cmds...)
 
-	case mergeResultMsg:
+	case engine.MergeResult:
 		return m.handleMergeResult(msg)
 
-	case checksRerunMsg:
-		if msg.err != nil {
-			slog.Error("failed to re-run checks", "pr", msg.pr.RepoShort(), "error", msg.err)
-			m.status = errorStyle.Render("✗ Re-run failed: " + msg.err.Error())
+	case engine.RerunResult:
+		m.RerunDone(msg)
+
+		if msg.Err != nil {
+			m.status = errorStyle.Render("✗ Re-run failed: " + msg.Err.Error())
 		} else {
-			slog.Info("re-running failed checks", "pr", msg.pr.RepoShort())
-			m.status = successStyle.Render("✓ Re-running failed jobs on " + msg.pr.RepoShort())
-			m.markRerunInFlight(msg.pr.RepoShort(), msg.pr.HeadSHA)
+			m.status = successStyle.Render("✓ Re-running failed jobs on " + msg.PR.RepoShort())
 		}
 
 		m.triggerRefresh()
@@ -296,14 +226,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(clearStatusCmd(), delayedRefreshCmd(15*time.Second))
 
-	case autoRerunResultMsg:
+	case engine.AutoRerunResult:
 		return m.handleAutoRerunResult(msg)
 
 	case autoRebaseResultMsg:
 		return m.handleAutoRebaseResult(msg)
 
-	case mergedCheckMsg:
-		return m.handleMergedCheck(msg)
+	case engine.MergedCheckResult:
+		m.MergedCheckDone(msg)
+
+		return m, nil
 
 	case clearStatusMsg:
 		m.status = ""
@@ -361,9 +293,9 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "w":
 		return m.doApproveWorkflows()
 	case "a":
-		return m.toggleAuto(m.autoMerge, m.mergeFailed, "automerge")
+		return m.toggleAuto(engine.Automerge)
 	case "A":
-		return m.toggleAuto(m.autoRerun, m.rerunFailed, "autorerun")
+		return m.toggleAuto(engine.Autorerun)
 	case "b":
 		return m.toggleAutoRebase()
 	case "K":
@@ -390,15 +322,15 @@ func (m model) doMerge() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if item.pr.OverallStatus != pr.StatusReady {
-		m.status = errorStyle.Render("✗ PR not ready to merge — need synced base + passing CI")
+	if err := m.CheckMerge(item.pr); err != nil {
+		m.status = refusalStatus(err)
 
 		return m, clearStatusCmd()
 	}
 
 	m.status = fmt.Sprintf("Merging %s...", item.pr.RepoShort())
 
-	return m, mergeCmd(m.client, item.pr, false)
+	return m, workCmd(m.MergeWork(item.pr, false))
 }
 
 func (m model) doRebase() (tea.Model, tea.Cmd) {
@@ -420,7 +352,7 @@ func (m model) doRebase() (tea.Model, tea.Cmd) {
 		return m, clearStatusCmd()
 	}
 
-	script, err := git.BuildRebaseScript(m.config.DataDir, item.pr, m.config.RebaseCountdown)
+	script, err := git.BuildRebaseScript(m.Config.DataDir, item.pr, m.Config.RebaseCountdown)
 	if err != nil {
 		m.status = errorStyle.Render("✗ " + err.Error())
 
@@ -445,38 +377,25 @@ func (m model) doRerunChecks() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if item.pr.CIStatus != pr.CIFailed {
-		m.status = errorStyle.Render("✗ No failed checks to re-run")
+	if err := m.StartRerun(item.pr); err != nil {
+		m.status = refusalStatus(err)
 
 		return m, clearStatusCmd()
 	}
 
-	if item.pr.FailedWorkflowRunsKnown && item.pr.FailedWorkflowRuns == 0 {
-		if item.pr.RunningWorkflowRuns > 0 {
-			m.status = indicatorWarn.Render(
-				"⚠ A workflow is still running. If the failure is in it, failed jobs can be re-run " +
-					"once it finishes (or press A for autorerun)",
-			)
+	m.status = fmt.Sprintf("Re-running failed jobs on %s...", item.pr.RepoShort())
 
-			return m, clearStatusCmd()
-		}
+	return m, workCmd(m.RerunWork(item.pr))
+}
 
-		m.status = errorStyle.Render("✗ No failed GitHub Actions jobs to re-run")
-
-		return m, clearStatusCmd()
+// refusalStatus renders why the engine did not start an action.
+func refusalStatus(err error) string {
+	var refusal *engine.RefusedError
+	if errors.As(err, &refusal) && refusal.Soft {
+		return indicatorWarn.Render("⚠ " + refusal.Reason)
 	}
 
-	key := item.pr.RepoShort()
-	if last, ok := m.lastRerun[key]; ok && time.Since(last) < time.Minute {
-		m.status = indicatorWarn.Render("⚠ Already re-ran checks less than a minute ago")
-
-		return m, clearStatusCmd()
-	}
-
-	m.lastRerun[key] = time.Now()
-	m.status = fmt.Sprintf("Re-running failed jobs on %s...", key)
-
-	return m, rerunChecksCmd(m.client, item.pr)
+	return errorStyle.Render("✗ " + err.Error())
 }
 
 func (m model) doApproveWorkflows() (tea.Model, tea.Cmd) {
@@ -487,7 +406,7 @@ func (m model) doApproveWorkflows() (tea.Model, tea.Cmd) {
 
 	m.status = fmt.Sprintf("Approving workflows on %s...", item.pr.RepoShort())
 
-	return m, approveWorkflowsCmd(m.client, item.pr)
+	return m, approveWorkflowsCmd(m.Client, item.pr)
 }
 
 func (m model) openInBrowser() (tea.Model, tea.Cmd) {
@@ -501,79 +420,42 @@ func (m model) openInBrowser() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) toggleAuto(entries map[string]bool, failedMap map[string]bool, label string) (tea.Model, tea.Cmd) {
+func (m model) toggleAuto(kind engine.Kind) (tea.Model, tea.Cmd) {
 	item, ok := m.selectedItem()
 	if !ok || item.merged {
 		return m, nil
 	}
 
 	key := item.pr.RepoShort()
-	enabled := false
+	label := string(kind)
 
-	if entries[key] {
-		delete(entries, key)
-		delete(failedMap, key)
-		m.clearAutoCheck(label, key)
-
-		if label == "autorerun" {
-			delete(m.lastAutoRerun, key)
-		}
-
-		slog.Info(label+" disabled", "pr", key)
-		m.status = indicatorAuto.Render("⚡ " + label + " disabled for " + key)
-	} else {
-		entries[key] = true
-		enabled = true
-
-		slog.Info(label+" enabled", "pr", key)
-		m.status = indicatorAuto.Render("⚡ " + label + " enabled for " + key)
-	}
-
-	if err := m.saveDB(); err != nil {
-		slog.Error("failed to save db", "error", err)
+	enabled, work, err := m.Toggle(kind, item.pr)
+	if err != nil {
 		m.status = errorStyle.Render("✗ Failed to save db.yaml: " + err.Error())
 
 		return m, clearStatusCmd()
 	}
 
-	if enabled {
-		if cmd := m.immediateAutoCmd(item.pr, label); cmd != nil {
-			m.status = indicatorAuto.Render("⚡ " + label + " enabled for " + key + "; checking now")
-
-			return m, tea.Batch(clearStatusCmd(), cmd)
-		}
+	switch {
+	case !enabled:
+		m.status = indicatorAuto.Render("⚡ " + label + " disabled for " + key)
+	case work != nil:
+		m.status = indicatorAuto.Render("⚡ " + label + " enabled for " + key + "; checking now")
+	default:
+		m.status = indicatorAuto.Render("⚡ " + label + " enabled for " + key)
 	}
 
-	return m, clearStatusCmd()
+	return m, tea.Batch(clearStatusCmd(), workCmd(work))
 }
 
-func (m model) saveDB() error {
-	return store.Save(m.config.DataDir, store.DB{
-		AutoMerge:     m.autoMerge,
-		AutoRerun:     m.autoRerun,
-		AutoRerunLast: m.lastAutoRerun,
-		AutoRebase:    m.autoRebase,
-	})
-}
+func (m model) handleMergeResult(msg engine.MergeResult) (tea.Model, tea.Cmd) {
+	key := msg.PR.RepoShort()
 
-func (m model) handleMergeResult(msg mergeResultMsg) (tea.Model, tea.Cmd) {
-	key := msg.pr.RepoShort()
+	m.MergeDone(msg)
 
-	if msg.err != nil {
-		slog.Error("failed to merge", "pr", key, "auto", msg.auto, "error", msg.err)
-		m.status = errorStyle.Render("✗ Failed to merge " + key + ": " + msg.err.Error())
-
-		// GitHub refused this commit, and asking again would get the same
-		// answer. Automerge tries again when the PR gets a new head commit.
-		// Any other error says nothing about the commit: a base branch that
-		// moved shows the PR as behind on the next fetch, and after a network
-		// or server error automerge tries again once the cooldown is over.
-		if msg.auto && errors.Is(msg.err, github.ErrMergeRefused) {
-			m.mergeFailed[key] = true
-			notify.Send(notify.AutomergeGaveUp, key+": "+msg.err.Error())
-		}
+	if msg.Err != nil {
+		m.status = errorStyle.Render("✗ Failed to merge " + key + ": " + msg.Err.Error())
 	} else {
-		slog.Info("merged", "pr", key, "auto", msg.auto)
 		m.status = successStyle.Render("✓ Merged " + key)
 	}
 
@@ -586,85 +468,26 @@ func (m model) handleMergeResult(msg mergeResultMsg) (tea.Model, tea.Cmd) {
 	)
 }
 
-func (m model) handleAutoRerunResult(msg autoRerunResultMsg) (tea.Model, tea.Cmd) {
+func (m model) handleAutoRerunResult(msg engine.AutoRerunResult) (tea.Model, tea.Cmd) {
+	saveErr := m.AutoRerunDone(msg)
+
 	switch {
-	case msg.failed:
-		slog.Error("autorerun gave up", "pr", msg.prKey)
-		m.rerunFailed[msg.prKey] = true
+	case msg.Failed:
 		m.status = errorStyle.Render(
-			fmt.Sprintf("⚡ %s: re-ran %d times, still failing — giving up", msg.prKey, m.config.AutoMaxRetries),
+			fmt.Sprintf("⚡ %s: re-ran %d times, still failing — giving up", msg.PRKey, m.Config.AutoMaxRetries),
 		)
-		notify.Send(notify.AutorerunGaveUp, msg.prKey+" — still failing")
-	case msg.reran:
-		slog.Info("autorerun triggered", "pr", msg.prKey)
-
-		if msg.reranAt.IsZero() {
-			msg.reranAt = time.Now()
-		}
-
-		m.lastAutoRerun[msg.prKey] = msg.reranAt
-		m.markRerunInFlight(msg.prKey, msg.headSHA)
-
-		if err := m.saveDB(); err != nil {
-			slog.Error("failed to save db", "error", err)
-			m.status = errorStyle.Render("⚡ Autorerun triggered, but failed to save db.yaml: " + err.Error())
+	case msg.Reran:
+		if saveErr != nil {
+			m.status = errorStyle.Render("⚡ Autorerun triggered, but failed to save db.yaml: " + saveErr.Error())
 
 			return m, clearStatusCmd()
 		}
 
-		m.status = successStyle.Render("⚡ Autorerun: re-running failed jobs on " + msg.prKey)
+		m.status = successStyle.Render("⚡ Autorerun: re-running failed jobs on " + msg.PRKey)
 		m.triggerRefresh()
 
 		return m, tea.Batch(clearStatusCmd(), delayedRefreshCmd(15*time.Second))
-	case msg.unavailable:
-		slog.Info("autorerun skipped, no failed GitHub Actions runs", "pr", msg.prKey)
-	case msg.err != nil:
-		slog.Error("autorerun error", "pr", msg.prKey, "error", msg.err)
 	}
 
 	return m, clearStatusCmd()
-}
-
-// confirmGone records the API-confirmed outcome of a PR that left the list and
-// notifies about it.
-func (m model) confirmGone(key string, merged bool) {
-	mp := m.recentlyMerged[key]
-	if mp == nil {
-		return
-	}
-
-	mp.Confirmed = true
-	mp.Merged = merged
-
-	event := notify.Closed
-	if merged {
-		event = notify.Merged
-	}
-
-	notify.Send(event, key+" — "+mp.PR.Title)
-}
-
-func (m model) handleMergedCheck(msg mergedCheckMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case msg.err != nil:
-		slog.Error("merged PR check/cleanup error", "pr", msg.prKey, "error", msg.err)
-
-		// Only the branch cleanup failed, the merge itself is confirmed.
-		if msg.merged {
-			m.confirmGone(msg.prKey, true)
-		}
-	case msg.open:
-		delete(m.recentlyMerged, msg.prKey)
-		slog.Info("PR is still open, keeping it out of merged/closed list", "pr", msg.prKey)
-	case msg.deleted:
-		m.confirmGone(msg.prKey, true)
-		slog.Info("deleted merged branch", "pr", msg.prKey, "branch", msg.branch)
-	case !msg.merged:
-		m.confirmGone(msg.prKey, false)
-		slog.Info("PR closed without merge", "pr", msg.prKey)
-	default:
-		m.confirmGone(msg.prKey, true)
-	}
-
-	return m, nil
 }

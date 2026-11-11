@@ -43,7 +43,7 @@ func (m model) View() string {
 		b.WriteString("\n")
 	}
 
-	if m.err != nil && len(m.prs) > 0 {
+	if m.err != nil && len(m.PRs) > 0 {
 		b.WriteString("\n")
 		b.WriteString(errorStyle.Render("  Fetch error: " + m.err.Error()))
 		b.WriteString("\n")
@@ -67,8 +67,8 @@ func (m model) renderHeader() string {
 	}
 
 	prCount := ""
-	if len(m.prs) > 0 {
-		prCount = fmt.Sprintf(" · %d PRs", len(m.prs))
+	if len(m.PRs) > 0 {
+		prCount = fmt.Sprintf(" · %d PRs", len(m.PRs))
 	}
 
 	right := headerInfoStyle.Render(info + prCount)
@@ -156,7 +156,7 @@ func (m model) renderMergedItem(item displayItem, selected bool) string {
 	confirmed := false
 	merged := false
 
-	if mp := m.recentlyMerged[item.pr.RepoShort()]; mp != nil {
+	if mp := m.RecentlyMerged[item.pr.RepoShort()]; mp != nil {
 		confirmed = mp.Confirmed
 		merged = mp.Merged
 	}
@@ -206,11 +206,11 @@ func renderRepoRef(p pr.PR) string {
 }
 
 func (m model) badgeFor(key string, status pr.OverallStatus) string {
-	if m.isMergeFailed(key) {
+	if m.IsMergeFailed(key) {
 		return badgeMergeFailed.Render("MERGE FAIL")
 	}
 
-	if m.isRerunFailed(key) {
+	if m.IsRerunFailed(key) {
 		return badgeRerunFailed.Render("RERUN FAIL")
 	}
 
@@ -222,19 +222,19 @@ func (m model) autoIndicators(p pr.PR) string {
 
 	var parts []string
 
-	if m.isMergeFailed(key) {
+	if m.IsMergeFailed(key) {
 		parts = append(parts, badgeMergeFailed.Render("⚡ merge gave up"))
-	} else if m.autoMerge[key] {
+	} else if m.AutoMerge[key] {
 		parts = append(parts, indicatorAuto.Render("⚡ automerge"))
 	}
 
-	if m.isRerunFailed(key) {
+	if m.IsRerunFailed(key) {
 		parts = append(parts, badgeRerunFailed.Render("⚡ rerun gave up"))
-	} else if m.autoRerun[key] {
+	} else if m.AutoRerun[key] {
 		parts = append(parts, indicatorAuto.Render("⚡ autorerun"))
 	}
 
-	if _, on := m.autoRebase[key]; on {
+	if _, on := m.AutoRebase[key]; on {
 		reason, failed := m.rebaseFailure(p)
 
 		switch {

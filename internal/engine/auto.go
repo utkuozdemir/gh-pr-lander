@@ -1,117 +1,105 @@
-package tui
+package engine
 
 import (
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
 )
 
-// Auto-merge / auto-rerun logic and the rerun "settling" guard for issue #1.
+// Automerge and autorerun decisions, and the two settling guards.
 
-func (m model) isMergeFailed(key string) bool {
-	return m.autoMerge[key] && m.mergeFailed[key]
+func (s *State) IsMergeFailed(key string) bool {
+	return s.AutoMerge[key] && s.MergeFailed[key]
 }
 
-func (m model) isRerunFailed(key string) bool {
-	return m.autoRerun[key] && m.rerunFailed[key]
+func (s *State) IsRerunFailed(key string) bool {
+	return s.AutoRerun[key] && s.RerunFailed[key]
 }
 
-func (m *model) autoCmds() []tea.Cmd {
-	var cmds []tea.Cmd
+// AutoWorks returns the merges and re-runs that automation should start now.
+func (s *State) AutoWorks() []Work {
+	var works []Work
 
-	for _, p := range m.prs {
-		if cmd := m.autoMergeCmd(p); cmd != nil {
-			cmds = append(cmds, cmd)
+	for _, p := range s.PRs {
+		if w := s.autoMergeWork(p); w != nil {
+			works = append(works, w)
 		}
 
-		if cmd := m.autoRerunCmd(p); cmd != nil {
-			cmds = append(cmds, cmd)
+		if w := s.autoRerunWork(p); w != nil {
+			works = append(works, w)
 		}
 	}
 
-	return cmds
+	return works
 }
 
-func (m *model) immediateAutoCmd(p pr.PR, label string) tea.Cmd {
-	switch label {
-	case "automerge":
-		return m.autoMergeCmd(p)
-	case "autorerun":
-		return m.autoRerunCmd(p)
-	default:
-		return nil
-	}
-}
-
-func (m *model) autoMergeCmd(p pr.PR) tea.Cmd {
+func (s *State) autoMergeWork(p pr.PR) Work {
 	key := p.RepoShort()
-	if !m.shouldAutoMerge(p) || !m.markAutoCheck("merge", key) {
+	if !s.shouldAutoMerge(p) || !s.markAutoCheck("merge", key) {
 		return nil
 	}
 
-	return mergeCmd(m.client, p, true)
+	return s.MergeWork(p, true)
 }
 
-func (m *model) autoRerunCmd(p pr.PR) tea.Cmd {
+func (s *State) autoRerunWork(p pr.PR) Work {
 	key := p.RepoShort()
-	if !m.shouldAutoRerun(p) || !m.markAutoCheck("rerun", key) {
+	if !s.shouldAutoRerun(p) || !s.markAutoCheck("rerun", key) {
 		return nil
 	}
 
-	return autoRerunCmd(m.client, p, m.config.AutoMaxRetries)
+	return s.autoRerunCheckWork(p)
 }
 
-func (m model) shouldAutoMerge(p pr.PR) bool {
+func (s *State) shouldAutoMerge(p pr.PR) bool {
 	key := p.RepoShort()
 
-	return m.autoMerge[key] && !m.mergeFailed[key] && p.OverallStatus == pr.StatusReady
+	return s.AutoMerge[key] && !s.MergeFailed[key] && p.OverallStatus == pr.StatusReady
 }
 
-func (m model) shouldAutoRerun(p pr.PR) bool {
+func (s *State) shouldAutoRerun(p pr.PR) bool {
 	key := p.RepoShort()
-	if !m.autoRerun[key] || m.rerunFailed[key] || p.CIStatus != pr.CIFailed ||
+	if !s.AutoRerun[key] || s.RerunFailed[key] || p.CIStatus != pr.CIFailed ||
 		!p.FailedWorkflowRunsKnown || p.FailedWorkflowRuns <= 0 {
 		return false
 	}
 
-	last := m.lastAutoRerun[key]
+	last := s.LastAutoRerun[key]
 
-	return last.IsZero() || time.Since(last) >= m.config.AutoCooldown
+	return last.IsZero() || time.Since(last) >= s.Config.AutoCooldown
 }
 
-// autorerunWillHandle reports whether autorerun is going to re-run the PR's
+// AutorerunWillHandle reports whether autorerun is going to re-run the PR's
 // failed checks: it is on, has not given up, and an Actions run on the head
 // failed or is still finishing. A failure outside Actions is never re-run.
-func (m model) autorerunWillHandle(p pr.PR) bool {
+func (s *State) AutorerunWillHandle(p pr.PR) bool {
 	key := p.RepoShort()
 
-	return m.autoRerun[key] && !m.rerunFailed[key] && p.FailedWorkflowRunsKnown &&
+	return s.AutoRerun[key] && !s.RerunFailed[key] && p.FailedWorkflowRunsKnown &&
 		(p.FailedWorkflowRuns > 0 || p.RunningWorkflowRuns > 0)
 }
 
-func (m *model) markAutoCheck(kind, key string) bool {
-	if m.lastAutoCheck == nil {
-		m.lastAutoCheck = make(map[string]time.Time)
+func (s *State) markAutoCheck(kind, key string) bool {
+	if s.LastAutoCheck == nil {
+		s.LastAutoCheck = make(map[string]time.Time)
 	}
 
 	checkKey := kind + ":" + key
-	if time.Since(m.lastAutoCheck[checkKey]) < m.config.AutoCooldown {
+	if time.Since(s.LastAutoCheck[checkKey]) < s.Config.AutoCooldown {
 		return false
 	}
 
-	m.lastAutoCheck[checkKey] = time.Now()
+	s.LastAutoCheck[checkKey] = time.Now()
 
 	return true
 }
 
-func (m model) clearAutoCheck(label, key string) {
-	switch label {
-	case "automerge":
-		delete(m.lastAutoCheck, "merge:"+key)
-	case "autorerun":
-		delete(m.lastAutoCheck, "rerun:"+key)
+func (s *State) clearAutoCheck(kind Kind, key string) {
+	switch kind {
+	case Automerge:
+		delete(s.LastAutoCheck, "merge:"+key)
+	case Autorerun:
+		delete(s.LastAutoCheck, "rerun:"+key)
 	}
 }
 
@@ -124,37 +112,37 @@ func (m model) clearAutoCheck(label, key string) {
 // running. We stop settling as soon as GitHub catches up (CI shows running
 // again), the head SHA changes (a new push), or the grace window elapses.
 
-func (m *model) markRerunInFlight(key, headSHA string) {
-	if m.rerunInFlight == nil {
-		m.rerunInFlight = make(map[string]time.Time)
-		m.rerunInFlightSHA = make(map[string]string)
+func (s *State) MarkRerunInFlight(key, headSHA string) {
+	if s.RerunInFlight == nil {
+		s.RerunInFlight = make(map[string]time.Time)
+		s.RerunInFlightSHA = make(map[string]string)
 	}
 
-	m.rerunInFlight[key] = time.Now()
-	m.rerunInFlightSHA[key] = headSHA
+	s.RerunInFlight[key] = time.Now()
+	s.RerunInFlightSHA[key] = headSHA
 }
 
-func (m *model) clearRerunInFlight(key string) {
-	delete(m.rerunInFlight, key)
-	delete(m.rerunInFlightSHA, key)
+func (s *State) clearRerunInFlight(key string) {
+	delete(s.RerunInFlight, key)
+	delete(s.RerunInFlightSHA, key)
 }
 
 // applyRerunSettling rewrites the freshly fetched PRs so that any PR with a
 // recent in-flight re-run is not prematurely considered ready. It also prunes
 // in-flight entries that no longer apply. It mutates the in-flight maps, hence
 // the pointer receiver.
-func (m *model) applyRerunSettling(prs []pr.PR) []pr.PR {
-	if len(m.rerunInFlight) == 0 {
+func (s *State) applyRerunSettling(prs []pr.PR) []pr.PR {
+	if len(s.RerunInFlight) == 0 {
 		return prs
 	}
 
-	grace := m.config.RerunSettleGrace()
+	grace := s.Config.RerunSettleGrace()
 	present := make(map[string]bool, len(prs))
 
 	for i := range prs {
 		key := prs[i].RepoShort()
 
-		triggered, ok := m.rerunInFlight[key]
+		triggered, ok := s.RerunInFlight[key]
 		if !ok {
 			continue
 		}
@@ -162,8 +150,8 @@ func (m *model) applyRerunSettling(prs []pr.PR) []pr.PR {
 		present[key] = true
 
 		// A new push invalidates the old run entirely.
-		if sha := m.rerunInFlightSHA[key]; sha != "" && prs[i].HeadSHA != "" && sha != prs[i].HeadSHA {
-			m.clearRerunInFlight(key)
+		if sha := s.RerunInFlightSHA[key]; sha != "" && prs[i].HeadSHA != "" && sha != prs[i].HeadSHA {
+			s.clearRerunInFlight(key)
 
 			continue
 		}
@@ -171,14 +159,14 @@ func (m *model) applyRerunSettling(prs []pr.PR) []pr.PR {
 		// GitHub has caught up: the re-run is genuinely running again. The
 		// transient passed window is over, so stop guarding.
 		if prs[i].CIStatus == pr.CIRunning {
-			m.clearRerunInFlight(key)
+			s.clearRerunInFlight(key)
 
 			continue
 		}
 
 		// Grace elapsed — give up guarding and trust GitHub.
 		if time.Since(triggered) >= grace {
-			m.clearRerunInFlight(key)
+			s.clearRerunInFlight(key)
 
 			continue
 		}
@@ -194,10 +182,10 @@ func (m *model) applyRerunSettling(prs []pr.PR) []pr.PR {
 
 	// Prune in-flight entries for PRs that vanished from the fetch (merged or
 	// closed) so the maps do not grow unbounded.
-	for key := range m.rerunInFlight {
+	for key := range s.RerunInFlight {
 		if !present[key] {
-			if time.Since(m.rerunInFlight[key]) >= grace {
-				m.clearRerunInFlight(key)
+			if time.Since(s.RerunInFlight[key]) >= grace {
+				s.clearRerunInFlight(key)
 			}
 		}
 	}
@@ -218,13 +206,13 @@ func (m *model) applyRerunSettling(prs []pr.PR) []pr.PR {
 // reading is treated as still running. The guard relaxes once the checks
 // re-register (the count catches up) or a short grace elapses.
 
-func (m *model) applyChecksSettling(prs []pr.PR) []pr.PR {
-	if m.checkBaseline == nil {
-		m.checkBaseline = make(map[string]checkBaseline)
+func (s *State) applyChecksSettling(prs []pr.PR) []pr.PR {
+	if s.CheckBaseline == nil {
+		s.CheckBaseline = make(map[string]CheckBaseline)
 	}
 
 	now := time.Now()
-	grace := m.config.RerunSettleGrace()
+	grace := s.Config.RerunSettleGrace()
 	present := make(map[string]bool, len(prs))
 
 	for i := range prs {
@@ -236,31 +224,31 @@ func (m *model) applyChecksSettling(prs []pr.PR) []pr.PR {
 		key := p.RepoShort()
 		present[key] = true
 
-		bl, ok := m.checkBaseline[key]
+		bl, ok := s.CheckBaseline[key]
 
 		switch {
 		case !ok:
 			// First sighting: nothing to compare against yet.
-			bl = checkBaseline{sha: p.HeadSHA, firstSeen: now, maxTotal: p.Checks.Total}
-		case bl.sha != p.HeadSHA:
+			bl = CheckBaseline{SHA: p.HeadSHA, FirstSeen: now, MaxTotal: p.Checks.Total}
+		case bl.SHA != p.HeadSHA:
 			// A new commit. Carry the previous commit's high-water check count
 			// forward as the baseline the new (still-registering) checks must
 			// catch up to.
-			bl = checkBaseline{sha: p.HeadSHA, firstSeen: now, maxTotal: p.Checks.Total, prevMaxTotal: bl.maxTotal}
+			bl = CheckBaseline{SHA: p.HeadSHA, FirstSeen: now, MaxTotal: p.Checks.Total, PrevMaxTotal: bl.MaxTotal}
 		default:
 			// Same commit: checks only grow as they register, so keep the
 			// high-water mark.
-			bl.maxTotal = max(bl.maxTotal, p.Checks.Total)
+			bl.MaxTotal = max(bl.MaxTotal, p.Checks.Total)
 		}
 
-		m.checkBaseline[key] = bl
+		s.CheckBaseline[key] = bl
 
 		// Suppress only a freshly-pushed commit that currently looks all-green
 		// while still showing fewer checks than its predecessor had — i.e. the
 		// required checks have not registered yet.
 		if (p.CIStatus == pr.CIPassed || p.CIStatus == pr.CINone) &&
-			bl.prevMaxTotal > p.Checks.Total &&
-			now.Sub(bl.firstSeen) < grace {
+			bl.PrevMaxTotal > p.Checks.Total &&
+			now.Sub(bl.FirstSeen) < grace {
 			p.CIStatus = pr.CIRunning
 			p.OverallStatus = pr.ComputeOverallStatus(*p)
 		}
@@ -268,9 +256,9 @@ func (m *model) applyChecksSettling(prs []pr.PR) []pr.PR {
 
 	// Prune baselines for PRs that have left the fetch (merged or closed) once
 	// they are past the grace, so the map does not grow unbounded.
-	for key, bl := range m.checkBaseline {
-		if !present[key] && now.Sub(bl.firstSeen) >= grace {
-			delete(m.checkBaseline, key)
+	for key, bl := range s.CheckBaseline {
+		if !present[key] && now.Sub(bl.FirstSeen) >= grace {
+			delete(s.CheckBaseline, key)
 		}
 	}
 

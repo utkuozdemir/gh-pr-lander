@@ -59,15 +59,15 @@ func queueKey(p pr.PR) string {
 func (m model) rebaseQueues() map[string][]pr.PR {
 	queues := make(map[string][]pr.PR)
 
-	for _, p := range m.prs {
-		if _, ok := m.autoRebase[p.RepoShort()]; ok {
+	for _, p := range m.PRs {
+		if _, ok := m.AutoRebase[p.RepoShort()]; ok {
 			queues[queueKey(p)] = append(queues[queueKey(p)], p)
 		}
 	}
 
 	for _, q := range queues {
 		slices.SortFunc(q, func(a, b pr.PR) int {
-			return m.autoRebase[a.RepoShort()] - m.autoRebase[b.RepoShort()]
+			return m.AutoRebase[a.RepoShort()] - m.AutoRebase[b.RepoShort()]
 		})
 	}
 
@@ -83,7 +83,7 @@ func (m model) rebaseQueues() map[string][]pr.PR {
 func (m model) rebaseEligible(p pr.PR) bool {
 	return !p.IsDraft &&
 		p.BaseStatus != pr.BaseConflict &&
-		(p.CIStatus != pr.CIFailed || m.autorerunWillHandle(p)) &&
+		(p.CIStatus != pr.CIFailed || m.AutorerunWillHandle(p)) &&
 		p.ReviewStatus != pr.ReviewPending &&
 		p.ReviewStatus != pr.ReviewChangesRequested
 }
@@ -197,7 +197,7 @@ func (m *model) autoRebaseCmd() tea.Cmd {
 	m.rebasing = p.RepoShort()
 	slog.Info("autorebase started", "pr", m.rebasing)
 
-	return runAutoRebaseCmd(m.config.DataDir, p)
+	return runAutoRebaseCmd(m.Config.DataDir, p)
 }
 
 // runAutoRebaseCmd runs the same script as a manual rebase, but in the
@@ -258,7 +258,7 @@ func (m model) toggleAutoRebase() (tea.Model, tea.Cmd) {
 	}
 
 	key := item.pr.RepoShort()
-	_, on := m.autoRebase[key]
+	_, on := m.AutoRebase[key]
 	_, failed := m.rebaseFailure(item.pr)
 
 	switch {
@@ -267,22 +267,22 @@ func (m model) toggleAutoRebase() (tea.Model, tea.Cmd) {
 		slog.Info("autorebase retry", "pr", key)
 		m.status = indicatorAuto.Render("⚡ retrying autorebase of " + key)
 	case on:
-		delete(m.autoRebase, key)
+		delete(m.AutoRebase, key)
 		delete(m.rebaseState, key)
 		slog.Info("autorebase disabled", "pr", key)
 		m.status = indicatorAuto.Render("⚡ autorebase disabled for " + key)
 	default:
 		last := 0
-		for _, order := range m.autoRebase {
+		for _, order := range m.AutoRebase {
 			last = max(last, order)
 		}
 
-		m.autoRebase[key] = last + 1
+		m.AutoRebase[key] = last + 1
 		slog.Info("autorebase enabled", "pr", key)
 		m.status = indicatorAuto.Render("⚡ autorebase enabled for " + key)
 	}
 
-	if err := m.saveDB(); err != nil {
+	if err := m.SaveDB(); err != nil {
 		slog.Error("failed to save db", "error", err)
 		m.status = errorStyle.Render("✗ Failed to save db.yaml: " + err.Error())
 	}
@@ -302,7 +302,7 @@ func (m model) moveInQueue(delta int) (tea.Model, tea.Cmd) {
 	}
 
 	key := item.pr.RepoShort()
-	if _, on := m.autoRebase[key]; !on {
+	if _, on := m.AutoRebase[key]; !on {
 		m.status = indicatorWarn.Render("⚠ Autorebase is off for " + key + ", press b to queue it")
 
 		return m, clearStatusCmd()
@@ -317,9 +317,9 @@ func (m model) moveInQueue(delta int) (tea.Model, tea.Cmd) {
 	}
 
 	other := queue[j].RepoShort()
-	m.autoRebase[key], m.autoRebase[other] = m.autoRebase[other], m.autoRebase[key]
+	m.AutoRebase[key], m.AutoRebase[other] = m.AutoRebase[other], m.AutoRebase[key]
 
-	if err := m.saveDB(); err != nil {
+	if err := m.SaveDB(); err != nil {
 		slog.Error("failed to save db", "error", err)
 		m.status = errorStyle.Render("✗ Failed to save db.yaml: " + err.Error())
 

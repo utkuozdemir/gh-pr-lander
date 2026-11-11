@@ -29,11 +29,11 @@ The code is split into small packages under `internal/`. The dependency
 direction is strict and acyclic:
 
 ```
-main  ──>  tui  ──>  github ──> pr
-                ├──>  git    ──> pr
-                ├──>  store
-                ├──>  notify
-                └──>  config
+main  ──>  tui  ──>  engine ──> github ──> pr
+                │        ├──>  store
+                │        ├──>  notify
+                │        └──>  config
+                └──>  git ──> pr
         github ──> pr,  config-independent
 ```
 
@@ -60,23 +60,31 @@ main  ──>  tui  ──>  github ──> pr
   is on for a PR, the transition it will handle does not notify, only its
   outcome does (see `checkTransitions`).
 - **`internal/config`** — the resolved `Config` value, built once in `main`.
-- **`internal/tui`** — Bubble Tea model, update loop, views, styles, and the
-  auto-merge / auto-rerun logic. Split across `model.go` (model + Update +
-  actions), `auto.go` (automation + the rerun-settling guard), `merged.go`
-  (merged/closed tracking + transition notifications), `view.go`, `styles.go`,
-  `commands.go` (messages + `tea.Cmd`s), `client.go` (the `Client` interface).
+- **`internal/engine`** — everything the tool does with PRs that needs no user
+  interface and no signing: the automerge and autorerun switches (`auto.go`),
+  both settling guards, merged/closed tracking and transition notifications
+  (`merged.go`), the GitHub calls behind merge and re-run (`work.go`), and the
+  checks before a user action (`actions.go`). `State` is plain data with
+  synchronous methods and starts no goroutines. A GitHub call is handed back
+  as a `Work` func for the front end to run, and its `Result` goes into the
+  matching `...Done` method. This is the part a second front end reuses.
+- **`internal/tui`** — the Bubble Tea front end: model, update loop, views,
+  styles, and what needs the YubiKey (rebase and the autorebase queue in
+  `rebase.go`). The model embeds `*engine.State`, wraps each `engine.Work` in
+  a `tea.Cmd` (`workCmd`), and turns results into status lines.
 - **`main.go`** — thin wiring only: parse flags, build the client and poller,
   run the program and the poller together under an errgroup.
 
 ### Interfaces live on the consumer side
 
-The TUI does not depend on `*github.Client` directly. It declares a narrow
-`Client` interface (`internal/tui/client.go`) listing only the methods it uses;
+The engine and the TUI do not depend on `*github.Client` directly. The engine
+declares a narrow `Client` interface (`internal/engine/engine.go`, aliased as
+`tui.Client`) listing only the methods they use;
 `*github.Client` satisfies it structurally. Same pattern for the poller:
 `github.PRFetcher` is the one-method slice the poller needs. This is what makes
 the TUI and poller unit-testable with fakes and no network. **When you add a
-new GitHub call used by the TUI, add it to both `*github.Client` and the `tui.Client`
-interface.**
+new GitHub call used by the engine or the TUI, add it to both `*github.Client`
+and the `engine.Client` interface.**
 
 ### Responsiveness: the background Poller (issue #2)
 
@@ -177,7 +185,7 @@ already-passing ones. `computeCIStatus` then sees all-passed → `StatusReady` �
 automerge tries to merge. GitHub's rollup is transiently under-reporting, it is
 not a bug in our computation per se.
 
-**Fix:** `internal/tui/auto.go`, `applyRerunSettling`. When a re-run is
+**Fix:** `internal/engine/auto.go`, `applyRerunSettling`. When a re-run is
 triggered (manual `checksRerunMsg` success, or autorerun `reran`) the PR is
 marked "in flight" with the trigger time and the head SHA. While a PR is in
 flight and within the settle grace, any transient `CIPassed`/`CINone` reading is
@@ -223,7 +231,7 @@ could fire a spurious merge attempt).
    but on its own it does *not* catch the "1 registered + green, state SUCCESS"
    instant, so it is only a secondary signal.
 
-2. **Cross-fetch check-count settling** in `internal/tui/auto.go`,
+2. **Cross-fetch check-count settling** in `internal/engine/auto.go`,
    `applyChecksSettling` (keyed by PR via `checkBaseline`). For each PR we
    remember the head SHA, when we first saw it, the high-water check count on it,
    and the high-water count on the *previous* SHA. When the SHA just changed and
@@ -238,7 +246,7 @@ could fire a spurious merge attempt).
 
 Both guards run each fetch (`applyChecksSettling(applyRerunSettling(...))`) and
 only ever push toward `CIRunning`, so they compose without fighting. Tested in
-`internal/tui/auto_test.go` (settling) and `internal/github/client_test.go`
+`internal/engine/auto_test.go` (settling) and `internal/github/client_test.go`
 (rollup state), no network or timing flakiness.
 
 ## Required checks that never started (`BLOCKED` but green)
@@ -332,10 +340,11 @@ asleep mid-push) report back instead of holding `model.rebasing` forever.
   `roundTripFunc` returning canned responses — no real network. See
   `client_test.go`.
 - The `Poller` is tested with a `fakeFetcher` (the `PRFetcher` interface).
-- The TUI is tested by constructing `model` values and calling `Update` /
-  action methods / `applyRerunSettling` directly, with a `fakeClient`
-  implementing `tui.Client`. The issue #1 regression lives in
-  `internal/tui/auto_test.go`.
+- The engine is tested by constructing `State` values and calling its methods
+  directly, with a `fakeClient`. The issue #1 and #7 regressions live in
+  `internal/engine/auto_test.go`.
+- The TUI is tested by constructing `model` values (with a `State` inside) and
+  calling `Update` / action methods directly.
 - `model.Update` returns `tea.Model`; cast back with `updated.(model)`.
 
 ## Build / test / lint

@@ -1,4 +1,4 @@
-package tui
+package engine
 
 import (
 	"errors"
@@ -17,45 +17,42 @@ func TestRefusedAutomergeWaitsForNewHeadCommit(t *testing.T) {
 	}
 	key := p.RepoShort()
 
-	m := testAutoToggleModel(t, p)
-	m.client = fakeClient{mergeErr: fmt.Errorf("%w: required status check is expected", github.ErrMergeRefused)}
-	m.autoMerge[key] = true
+	m := testState(t, p)
+	m.Client = fakeClient{mergeErr: fmt.Errorf("%w: required status check is expected", github.ErrMergeRefused)}
+	m.AutoMerge[key] = true
 
-	cmd := m.autoMergeCmd(p)
+	cmd := m.autoMergeWork(p)
 	if cmd == nil {
 		t.Fatal("expected automerge to merge a ready PR")
 	}
 
-	msg, ok := cmd().(mergeResultMsg)
-	if !ok || !msg.auto || msg.err == nil {
-		t.Fatalf("expected a failed automerge result, got %#v", msg)
+	res, ok := cmd().(MergeResult)
+	if !ok || !res.Auto || res.Err == nil {
+		t.Fatalf("expected a failed automerge result, got %#v", res)
 	}
 
-	updated, _ := m.Update(msg)
-	m = updated.(model)
+	m.MergeDone(res)
 
-	if m.autoMergeCmd(p) != nil {
+	if m.autoMergeWork(p) != nil {
 		t.Fatal("expected no second merge attempt on the refused commit")
 	}
 
 	rebased := p
 	rebased.HeadSHA = "bbb"
-	m.prevPRs = []pr.PR{p}
-	m.prs = []pr.PR{rebased}
+	m.PrevPRs = []pr.PR{p}
+	m.PRs = []pr.PR{rebased}
 	m.checkTransitions()
 
-	if m.autoMergeCmd(rebased) == nil {
+	if m.autoMergeWork(rebased) == nil {
 		t.Fatal("expected automerge to try again on the new head commit")
 	}
 }
 
 func TestManualMergeNeedsReadyPR(t *testing.T) {
 	p := pr.PR{Repo: "org/repo", Number: 1, BaseBranch: "main", HeadSHA: "aaa", OverallStatus: pr.StatusStale}
-	m := testAutoToggleModel(t, p)
+	m := testState(t, p)
 
-	if _, cmd := m.doMerge(); cmd == nil {
-		t.Fatal("expected a status-clearing command")
-	} else if _, merged := cmd().(mergeResultMsg); merged {
+	if err := m.CheckMerge(p); err == nil {
 		t.Fatal("expected no merge of a PR that is not ready")
 	}
 }
@@ -68,14 +65,13 @@ func TestAutomergeGivesUpOnlyOnRefusal(t *testing.T) {
 		Repo: "org/repo", Number: 1, BaseBranch: "main", HeadSHA: "aaa", OverallStatus: pr.StatusReady,
 	}
 
-	m := testAutoToggleModel(t, p)
-	m.autoMerge[p.RepoShort()] = true
+	m := testState(t, p)
+	m.AutoMerge[p.RepoShort()] = true
 
 	for _, err := range []error{github.ErrNotFastForward, errors.New("fast-forward merge HTTP 502: bad gateway")} {
-		updated, _ := m.Update(mergeResultMsg{pr: p, auto: true, err: err})
-		m = updated.(model)
+		m.MergeDone(MergeResult{PR: p, Auto: true, Err: err})
 
-		if m.isMergeFailed(p.RepoShort()) {
+		if m.IsMergeFailed(p.RepoShort()) {
 			t.Fatalf("expected automerge to stay on after %q", err)
 		}
 	}

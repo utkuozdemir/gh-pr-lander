@@ -1,4 +1,4 @@
-package tui
+package engine
 
 import (
 	"testing"
@@ -23,14 +23,14 @@ func readyPR(sha string) pr.PR {
 	return p
 }
 
-func settlingModel() model {
-	return model{
-		config:           config.Config{PollInterval: 2 * time.Minute},
-		autoMerge:        map[string]bool{"org/repo#1": true},
-		mergeFailed:      map[string]bool{},
-		lastAutoCheck:    map[string]time.Time{},
-		rerunInFlight:    map[string]time.Time{"org/repo#1": time.Now()},
-		rerunInFlightSHA: map[string]string{"org/repo#1": "sha1"},
+func settlingModel() *State {
+	return &State{
+		Config:           config.Config{PollInterval: 2 * time.Minute},
+		AutoMerge:        map[string]bool{"org/repo#1": true},
+		MergeFailed:      map[string]bool{},
+		LastAutoCheck:    map[string]time.Time{},
+		RerunInFlight:    map[string]time.Time{"org/repo#1": time.Now()},
+		RerunInFlightSHA: map[string]string{"org/repo#1": "sha1"},
 	}
 }
 
@@ -50,7 +50,7 @@ func TestApplyRerunSettlingSuppressesTransientPass(t *testing.T) {
 		t.Fatal("settling PR must not be READY")
 	}
 
-	if _, ok := m.rerunInFlight["org/repo#1"]; !ok {
+	if _, ok := m.RerunInFlight["org/repo#1"]; !ok {
 		t.Fatal("in-flight guard should remain while still settling")
 	}
 }
@@ -59,14 +59,14 @@ func TestApplyRerunSettlingBlocksSpuriousAutomerge(t *testing.T) {
 	m := settlingModel()
 
 	prs := m.applyRerunSettling([]pr.PR{readyPR("sha1")})
-	m.prs = prs
+	m.PRs = prs
 
 	if m.shouldAutoMerge(prs[0]) {
 		t.Fatal("automerge must not fire while a re-run is settling")
 	}
 
-	if cmds := m.autoCmds(); len(cmds) != 0 {
-		t.Fatalf("expected no auto commands during settling, got %d", len(cmds))
+	if works := m.AutoWorks(); len(works) != 0 {
+		t.Fatalf("expected no automation during settling, got %d", len(works))
 	}
 }
 
@@ -79,7 +79,7 @@ func TestApplyRerunSettlingClearsWhenRunningObserved(t *testing.T) {
 
 	m.applyRerunSettling([]pr.PR{running})
 
-	if _, ok := m.rerunInFlight["org/repo#1"]; ok {
+	if _, ok := m.RerunInFlight["org/repo#1"]; ok {
 		t.Fatal("in-flight guard should clear once GitHub reports running again")
 	}
 }
@@ -89,7 +89,7 @@ func TestApplyRerunSettlingClearsOnNewPush(t *testing.T) {
 
 	got := m.applyRerunSettling([]pr.PR{readyPR("sha2")}) // different SHA
 
-	if _, ok := m.rerunInFlight["org/repo#1"]; ok {
+	if _, ok := m.RerunInFlight["org/repo#1"]; ok {
 		t.Fatal("a new push (changed SHA) should clear the in-flight guard")
 	}
 
@@ -101,11 +101,11 @@ func TestApplyRerunSettlingClearsOnNewPush(t *testing.T) {
 func TestApplyRerunSettlingClearsAfterGrace(t *testing.T) {
 	m := settlingModel()
 	// Trigger time well beyond the settle grace.
-	m.rerunInFlight["org/repo#1"] = time.Now().Add(-10 * time.Minute)
+	m.RerunInFlight["org/repo#1"] = time.Now().Add(-10 * time.Minute)
 
 	got := m.applyRerunSettling([]pr.PR{readyPR("sha1")})
 
-	if _, ok := m.rerunInFlight["org/repo#1"]; ok {
+	if _, ok := m.RerunInFlight["org/repo#1"]; ok {
 		t.Fatal("in-flight guard should clear after the grace window elapses")
 	}
 
@@ -115,12 +115,11 @@ func TestApplyRerunSettlingClearsAfterGrace(t *testing.T) {
 }
 
 func TestMarkRerunInFlightViaRerunMessage(t *testing.T) {
-	m := testAutoToggleModel(t, readyPR("sha1"))
+	m := testState(t, readyPR("sha1"))
 
-	updated, _ := m.Update(checksRerunMsg{pr: pr.PR{Repo: "org/repo", Number: 1, HeadSHA: "sha1"}})
-	got := updated.(model)
+	m.RerunDone(RerunResult{PR: pr.PR{Repo: "org/repo", Number: 1, HeadSHA: "sha1"}})
 
-	if _, ok := got.rerunInFlight["org/repo#1"]; !ok {
+	if _, ok := m.RerunInFlight["org/repo#1"]; !ok {
 		t.Fatal("a successful manual re-run should mark the PR in flight")
 	}
 }
@@ -129,13 +128,13 @@ func TestMarkRerunInFlightViaRerunMessage(t *testing.T) {
 // report a small, all-green check set on the new commit before all its required
 // checks register. The PR must not be treated as ready during that window.
 
-func checksSettlingModel() model {
-	return model{
-		config:        config.Config{PollInterval: 2 * time.Minute},
-		autoMerge:     map[string]bool{"org/repo#1": true},
-		mergeFailed:   map[string]bool{},
-		lastAutoCheck: map[string]time.Time{},
-		checkBaseline: map[string]checkBaseline{},
+func checksSettlingModel() *State {
+	return &State{
+		Config:        config.Config{PollInterval: 2 * time.Minute},
+		AutoMerge:     map[string]bool{"org/repo#1": true},
+		MergeFailed:   map[string]bool{},
+		LastAutoCheck: map[string]time.Time{},
+		CheckBaseline: map[string]CheckBaseline{},
 	}
 }
 
@@ -194,9 +193,9 @@ func TestApplyChecksSettlingClearsAfterGrace(t *testing.T) {
 	m.applyChecksSettling([]pr.PR{checkedPR("sha2", 1)})
 
 	// Age the new commit's first-seen time beyond the grace window.
-	bl := m.checkBaseline["org/repo#1"]
-	bl.firstSeen = time.Now().Add(-m.config.RerunSettleGrace() - time.Second)
-	m.checkBaseline["org/repo#1"] = bl
+	bl := m.CheckBaseline["org/repo#1"]
+	bl.FirstSeen = time.Now().Add(-m.Config.RerunSettleGrace() - time.Second)
+	m.CheckBaseline["org/repo#1"] = bl
 
 	got := m.applyChecksSettling([]pr.PR{checkedPR("sha2", 1)})
 

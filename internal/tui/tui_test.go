@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/utkuozdemir/sidero-rebaser/internal/config"
+	"github.com/utkuozdemir/sidero-rebaser/internal/engine"
 	"github.com/utkuozdemir/sidero-rebaser/internal/github"
 	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
 )
@@ -36,26 +37,32 @@ func (f fakeClient) Username() string                                   { return
 func TestMergedCheckErrorDoesNotConfirmClosed(t *testing.T) {
 	key := "org/repo#1"
 	m := model{
-		client: fakeClient{},
-		recentlyMerged: map[string]*mergedPR{
-			key: {PR: pr.PR{Repo: "org/repo", Number: 1}, GoneAt: time.Now()},
+		State: &engine.State{
+			Client: fakeClient{},
+			RecentlyMerged: map[string]*engine.MergedPR{
+				key: {PR: pr.PR{Repo: "org/repo", Number: 1}, GoneAt: time.Now()},
+			},
 		},
 	}
 
-	updated, _ := m.Update(mergedCheckMsg{prKey: key, err: errors.New("boom")})
+	updated, _ := m.Update(engine.MergedCheckResult{PRKey: key, Err: errors.New("boom")})
 	got := updated.(model)
 
-	if got.recentlyMerged[key].Confirmed {
+	if got.RecentlyMerged[key].Confirmed {
 		t.Fatal("error result should not confirm merged/closed state")
 	}
 }
 
 func TestMergedCheckConfirmsMergeWhenOnlyCleanupFailed(t *testing.T) {
-	m := model{recentlyMerged: map[string]*mergedPR{"org/repo#1": {PR: pr.PR{Repo: "org/repo", Number: 1}}}}
+	m := model{
+		State: &engine.State{
+			RecentlyMerged: map[string]*engine.MergedPR{"org/repo#1": {PR: pr.PR{Repo: "org/repo", Number: 1}}},
+		},
+	}
 
-	updated, _ := m.handleMergedCheck(mergedCheckMsg{prKey: "org/repo#1", merged: true, err: errors.New("422")})
+	updated, _ := m.Update(engine.MergedCheckResult{PRKey: "org/repo#1", Merged: true, Err: errors.New("422")})
 
-	if mp := updated.(model).recentlyMerged["org/repo#1"]; !mp.Confirmed || !mp.Merged {
+	if mp := updated.(model).RecentlyMerged["org/repo#1"]; !mp.Confirmed || !mp.Merged {
 		t.Fatalf("expected the merge to be confirmed, got %+v", mp)
 	}
 }
@@ -63,16 +70,18 @@ func TestMergedCheckConfirmsMergeWhenOnlyCleanupFailed(t *testing.T) {
 func TestMergedCheckOpenRemovesGoneEntry(t *testing.T) {
 	key := "org/repo#1"
 	m := model{
-		client: fakeClient{},
-		recentlyMerged: map[string]*mergedPR{
-			key: {PR: pr.PR{Repo: "org/repo", Number: 1}, GoneAt: time.Now()},
+		State: &engine.State{
+			Client: fakeClient{},
+			RecentlyMerged: map[string]*engine.MergedPR{
+				key: {PR: pr.PR{Repo: "org/repo", Number: 1}, GoneAt: time.Now()},
+			},
 		},
 	}
 
-	updated, _ := m.Update(mergedCheckMsg{prKey: key, open: true})
+	updated, _ := m.Update(engine.MergedCheckResult{PRKey: key, Open: true})
 	got := updated.(model)
 
-	if _, ok := got.recentlyMerged[key]; ok {
+	if _, ok := got.RecentlyMerged[key]; ok {
 		t.Fatal("open PR should be removed from recentlyMerged")
 	}
 }
@@ -80,21 +89,23 @@ func TestMergedCheckOpenRemovesGoneEntry(t *testing.T) {
 func TestRenderMergedItemUsesClosedDescription(t *testing.T) {
 	key := "org/repo#1"
 	m := model{
-		width: 80,
-		recentlyMerged: map[string]*mergedPR{
-			key: {
-				PR:        pr.PR{Repo: "org/repo", Number: 1, Title: "closed"},
-				GoneAt:    time.Now().Add(-time.Minute),
-				Confirmed: true,
-				Merged:    false,
+		State: &engine.State{
+			RecentlyMerged: map[string]*engine.MergedPR{
+				key: {
+					PR:        pr.PR{Repo: "org/repo", Number: 1, Title: "closed"},
+					GoneAt:    time.Now().Add(-time.Minute),
+					Confirmed: true,
+					Merged:    false,
+				},
 			},
 		},
+		width: 80,
 	}
 
 	out := m.renderMergedItem(displayItem{
 		pr:     pr.PR{Repo: "org/repo", Number: 1, Title: "closed"},
 		merged: true,
-		goneAt: m.recentlyMerged[key].GoneAt,
+		goneAt: m.RecentlyMerged[key].GoneAt,
 	}, false)
 
 	if !strings.Contains(out, "CLOSED") || !strings.Contains(out, "Closed") {
@@ -108,13 +119,15 @@ func TestRenderMergedItemUsesClosedDescription(t *testing.T) {
 
 func TestDoRerunChecksRejectsFailedNonActionsChecks(t *testing.T) {
 	m := model{
-		prs: []pr.PR{{
-			Repo:                    "org/repo",
-			Number:                  1,
-			CIStatus:                pr.CIFailed,
-			FailedWorkflowRunsKnown: true,
-			FailedWorkflowRuns:      0,
-		}},
+		State: &engine.State{
+			PRs: []pr.PR{{
+				Repo:                    "org/repo",
+				Number:                  1,
+				CIStatus:                pr.CIFailed,
+				FailedWorkflowRunsKnown: true,
+				FailedWorkflowRuns:      0,
+			}},
+		},
 	}
 
 	updated, _ := m.doRerunChecks()
@@ -127,14 +140,16 @@ func TestDoRerunChecksRejectsFailedNonActionsChecks(t *testing.T) {
 
 func TestDoRerunChecksExplainsRunningWorkflow(t *testing.T) {
 	m := model{
-		prs: []pr.PR{{
-			Repo:                    "org/repo",
-			Number:                  1,
-			CIStatus:                pr.CIFailed,
-			FailedWorkflowRunsKnown: true,
-			FailedWorkflowRuns:      0,
-			RunningWorkflowRuns:     1,
-		}},
+		State: &engine.State{
+			PRs: []pr.PR{{
+				Repo:                    "org/repo",
+				Number:                  1,
+				CIStatus:                pr.CIFailed,
+				FailedWorkflowRunsKnown: true,
+				FailedWorkflowRuns:      0,
+				RunningWorkflowRuns:     1,
+			}},
+		},
 	}
 
 	updated, _ := m.doRerunChecks()
@@ -146,7 +161,11 @@ func TestDoRerunChecksExplainsRunningWorkflow(t *testing.T) {
 }
 
 func TestApproveWorkflowsOnlyForPRsAwaitingApproval(t *testing.T) {
-	m := model{prs: []pr.PR{{Repo: "org/repo", Number: 1}}}
+	m := model{
+		State: &engine.State{
+			PRs: []pr.PR{{Repo: "org/repo", Number: 1}},
+		},
+	}
 
 	if strings.Contains(m.renderFooter(), "approve workflows") {
 		t.Fatal("footer offers approval on a PR with nothing awaiting it")
@@ -156,7 +175,7 @@ func TestApproveWorkflowsOnlyForPRsAwaitingApproval(t *testing.T) {
 		t.Fatal("expected no approve command on a PR with nothing awaiting approval")
 	}
 
-	m.prs[0].AwaitingApprovalRuns = 1
+	m.PRs[0].AwaitingApprovalRuns = 1
 
 	if !strings.Contains(m.renderFooter(), "approve workflows") {
 		t.Fatal("footer does not offer approval on a PR awaiting it")
@@ -169,22 +188,24 @@ func TestApproveWorkflowsOnlyForPRsAwaitingApproval(t *testing.T) {
 
 func TestAutoCmdsUsesPersistedAutoRerunCooldown(t *testing.T) {
 	m := model{
-		config: config.Config{AutoCooldown: time.Hour},
-		prs: []pr.PR{{
-			Repo:                    "org/repo",
-			Number:                  1,
-			CIStatus:                pr.CIFailed,
-			FailedWorkflowRunsKnown: true,
-			FailedWorkflowRuns:      1,
-		}},
-		autoRerun:     map[string]bool{"org/repo#1": true},
-		rerunFailed:   map[string]bool{},
-		lastAutoCheck: map[string]time.Time{},
-		lastAutoRerun: map[string]time.Time{"org/repo#1": time.Now()},
+		State: &engine.State{
+			Config: config.Config{AutoCooldown: time.Hour},
+			PRs: []pr.PR{{
+				Repo:                    "org/repo",
+				Number:                  1,
+				CIStatus:                pr.CIFailed,
+				FailedWorkflowRunsKnown: true,
+				FailedWorkflowRuns:      1,
+			}},
+			AutoRerun:     map[string]bool{"org/repo#1": true},
+			RerunFailed:   map[string]bool{},
+			LastAutoCheck: map[string]time.Time{},
+			LastAutoRerun: map[string]time.Time{"org/repo#1": time.Now()},
+		},
 	}
 
-	if cmds := m.autoCmds(); len(cmds) != 0 {
-		t.Fatalf("expected cooldown to suppress autorerun, got %d commands", len(cmds))
+	if works := m.AutoWorks(); len(works) != 0 {
+		t.Fatalf("expected cooldown to suppress autorerun, got %d works", len(works))
 	}
 }
 
@@ -196,14 +217,14 @@ func TestToggleAutoMergeChecksImmediatelyWhenReady(t *testing.T) {
 		OverallStatus: pr.StatusReady,
 	})
 
-	updated, _ := m.toggleAuto(m.autoMerge, m.mergeFailed, "automerge")
+	updated, _ := m.toggleAuto(engine.Automerge)
 	got := updated.(model)
 
-	if !got.autoMerge[key] {
+	if !got.AutoMerge[key] {
 		t.Fatal("automerge was not enabled")
 	}
 
-	if got.lastAutoCheck["merge:"+key].IsZero() {
+	if got.LastAutoCheck["merge:"+key].IsZero() {
 		t.Fatal("expected automerge to check immediately")
 	}
 }
@@ -218,14 +239,14 @@ func TestToggleAutoRerunChecksImmediatelyWhenEligible(t *testing.T) {
 		FailedWorkflowRuns:      1,
 	})
 
-	updated, _ := m.toggleAuto(m.autoRerun, m.rerunFailed, "autorerun")
+	updated, _ := m.toggleAuto(engine.Autorerun)
 	got := updated.(model)
 
-	if !got.autoRerun[key] {
+	if !got.AutoRerun[key] {
 		t.Fatal("autorerun was not enabled")
 	}
 
-	if got.lastAutoCheck["rerun:"+key].IsZero() {
+	if got.LastAutoCheck["rerun:"+key].IsZero() {
 		t.Fatal("expected autorerun to check immediately")
 	}
 }
@@ -239,16 +260,16 @@ func TestToggleAutoRerunRespectsPersistedCooldown(t *testing.T) {
 		FailedWorkflowRunsKnown: true,
 		FailedWorkflowRuns:      1,
 	})
-	m.lastAutoRerun[key] = time.Now()
+	m.LastAutoRerun[key] = time.Now()
 
-	updated, _ := m.toggleAuto(m.autoRerun, m.rerunFailed, "autorerun")
+	updated, _ := m.toggleAuto(engine.Autorerun)
 	got := updated.(model)
 
-	if !got.autoRerun[key] {
+	if !got.AutoRerun[key] {
 		t.Fatal("autorerun was not enabled")
 	}
 
-	if !got.lastAutoCheck["rerun:"+key].IsZero() {
+	if !got.LastAutoCheck["rerun:"+key].IsZero() {
 		t.Fatal("autorerun should not check immediately while persisted cooldown is active")
 	}
 }
@@ -259,23 +280,26 @@ func TestToggleAutoDisableClearsCheckCooldown(t *testing.T) {
 		Repo:   "org/repo",
 		Number: 1,
 	})
-	m.autoRerun[key] = true
-	m.lastAutoCheck["rerun:"+key] = time.Now()
+	m.AutoRerun[key] = true
+	m.LastAutoCheck["rerun:"+key] = time.Now()
 
-	updated, _ := m.toggleAuto(m.autoRerun, m.rerunFailed, "autorerun")
+	updated, _ := m.toggleAuto(engine.Autorerun)
 	got := updated.(model)
 
-	if got.autoRerun[key] {
+	if got.AutoRerun[key] {
 		t.Fatal("autorerun was not disabled")
 	}
 
-	if !got.lastAutoCheck["rerun:"+key].IsZero() {
+	if !got.LastAutoCheck["rerun:"+key].IsZero() {
 		t.Fatal("autorerun check cooldown was not cleared")
 	}
 }
 
 func TestRenderActivePRShowsReviewThreads(t *testing.T) {
-	m := model{width: 120}
+	m := model{
+		State: &engine.State{},
+		width: 120,
+	}
 
 	for _, tc := range []struct {
 		name             string
@@ -306,7 +330,10 @@ func TestRenderActivePRShowsReviewThreads(t *testing.T) {
 }
 
 func TestRenderActivePRShowsTakenOverAuthor(t *testing.T) {
-	m := model{width: 120}
+	m := model{
+		State: &engine.State{},
+		width: 120,
+	}
 
 	out := m.renderActivePR(pr.PR{Repo: "org/repo", Number: 1, TakenOverFrom: "contributor"}, false)
 	if !strings.Contains(out, "⇄ @contributor") {
@@ -346,21 +373,23 @@ func testAutoToggleModel(t *testing.T, p pr.PR) model {
 	t.Helper()
 
 	return model{
-		client: fakeClient{},
-		config: config.Config{
-			DataDir:        t.TempDir(),
-			PollInterval:   2 * time.Minute,
-			AutoCooldown:   time.Hour,
-			AutoMaxRetries: 3,
+		State: &engine.State{
+			Client: fakeClient{},
+			Config: config.Config{
+				DataDir:        t.TempDir(),
+				PollInterval:   2 * time.Minute,
+				AutoCooldown:   time.Hour,
+				AutoMaxRetries: 3,
+			},
+			PRs:              []pr.PR{p},
+			AutoMerge:        map[string]bool{},
+			AutoRerun:        map[string]bool{},
+			LastAutoRerun:    map[string]time.Time{},
+			MergeFailed:      map[string]bool{},
+			RerunFailed:      map[string]bool{},
+			LastAutoCheck:    map[string]time.Time{},
+			RerunInFlight:    map[string]time.Time{},
+			RerunInFlightSHA: map[string]string{},
 		},
-		prs:              []pr.PR{p},
-		autoMerge:        map[string]bool{},
-		autoRerun:        map[string]bool{},
-		lastAutoRerun:    map[string]time.Time{},
-		mergeFailed:      map[string]bool{},
-		rerunFailed:      map[string]bool{},
-		lastAutoCheck:    map[string]time.Time{},
-		rerunInFlight:    map[string]time.Time{},
-		rerunInFlightSHA: map[string]string{},
 	}
 }
