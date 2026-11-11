@@ -435,6 +435,7 @@ task lint       # go mod tidy --diff + golangci-lint run
 task test       # go test ./...
 task test-race  # go test -race ./...   (the poller is concurrent — keep this clean)
 task build      # go build -o sidero-rebaser .
+task release    # tag the next version (svu) and push it, VERSION=vX.Y.Z to name one
 ```
 
 Or the raw commands: `go build ./...`, `go test ./...`, `golangci-lint run ./...`.
@@ -456,7 +457,11 @@ Or the raw commands: `go build ./...`, `go test ./...`, `golangci-lint run ./...
   unknown linter name is a config error there.
 - **Formatters**: gci, gofmt, gofumpt, goimports, golines (max-len 120), run via
   `golangci-lint fmt`. CI is `.github/workflows/build.yml` (tidy check, race
-  tests, lint, build) — no release/goreleaser flow on purpose.
+  tests, lint, build). A release is only a version tag: `task release` checks
+  that HEAD is the tip of `origin/main` with a clean tree, picks the next
+  version with svu from the commit types since the last tag, and pushes an
+  annotated, unsigned tag, which starts `.github/workflows/image.yml`. There
+  are no binaries, changelog or goreleaser yet, on purpose.
 
 Go version: see `go.mod` (currently 1.26.x). Uses generics-era stdlib helpers
 (`min`/`max`, `strings.SplitSeq`) and Go 1.22+ loop semantics (no `x := x`

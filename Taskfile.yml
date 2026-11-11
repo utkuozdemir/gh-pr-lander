@@ -35,3 +35,45 @@ tasks:
     desc: build the binary
     cmds:
       - go build -o sidero-rebaser .
+
+  release:
+    desc: tag the next version and push it, or VERSION when one is given
+    vars:
+      # svu proposes a version only when a commit since the last tag calls for
+      # one, and otherwise answers with the version that is already released.
+      NEXT_TAG:
+        # renovate: depName=caarlos0/svu datasource=docker
+        sh: docker run --rm -v "$PWD":/src -w /src caarlos0/svu:3.4.4 next
+      TAG: '{{.VERSION | default .NEXT_TAG}}'
+    cmds:
+      # releases are cut from the tip of main, with a clean tree. Tags are
+      # fetched too, so the next version is computed against all of them.
+      - git fetch --tags --force origin main
+      - test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || { echo "HEAD is not the tip of origin/main" >&2; exit 1; }
+      - test -z "$(git status --porcelain)" || { echo "the working tree is not clean (staged or untracked files included)" >&2; exit 1; }
+      - |
+        set -eu
+
+        echo "Releasing: {{.TAG}}"
+
+        # The image is only built for tags of this shape, so a version of any
+        # other one is tagged and then silently never released.
+        case '{{.TAG}}' in
+          v[0-9]*.[0-9]*.[0-9]*) ;;
+          *)
+            echo "==> {{.TAG}} is not a vX.Y.Z version, and nothing else starts a release" >&2
+            exit 1
+            ;;
+        esac
+
+        if git rev-parse -q --verify 'refs/tags/{{.TAG}}' >/dev/null; then
+          echo "==> {{.TAG}} is already released" >&2
+          echo "==> Name one to release it anyway, for example: task release VERSION=vX.Y.Z" >&2
+          exit 1
+        fi
+      # An annotated tag without a signature, like the commits here: nothing in
+      # this repo is signed, so a release needs no YubiKey. The global git
+      # config signs tags, which is why a bare `git tag vX.Y.Z` asks for a
+      # message and a touch.
+      - git tag --no-sign -a {{.TAG}} -m "{{.TAG}}"
+      - git push origin {{.TAG}}
