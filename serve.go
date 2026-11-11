@@ -22,10 +22,7 @@ import (
 // runServer runs the tool with no terminal: the poller, the engine's
 // automation and the page, until it is told to stop.
 func runServer(args []string) error {
-	cfg, opts, err := parseFlags(args, true)
-	if err != nil {
-		return err
-	}
+	cfg, opts := parseFlags(args, true)
 
 	// A server logs where its supervisor collects output, not into a file that
 	// grows in the data directory, and there is no desktop to notify.

@@ -42,10 +42,7 @@ func main() {
 }
 
 func runTerminal(args []string) error {
-	cfg, _, err := parseFlags(args, false)
-	if err != nil {
-		return err
-	}
+	cfg, _ := parseFlags(args, false)
 
 	logFile, err := setupLogging(cfg.DataDir)
 	if err != nil {
@@ -122,7 +119,7 @@ type serveOptions struct {
 
 // parseFlags reads the flags of the terminal app, or of the server when serve
 // is set. The two share most of them.
-func parseFlags(args []string, serve bool) (config.Config, serveOptions, error) {
+func parseFlags(args []string, serve bool) (config.Config, serveOptions) {
 	home, _ := os.UserHomeDir()
 	defaultDataDir := filepath.Join(home, ".gh-pr-lander")
 	name := "gh-pr-lander"
@@ -207,7 +204,7 @@ func parseFlags(args []string, serve bool) (config.Config, serveOptions, error) 
 		RebaseCountdown:       rebaseCountdown,
 		MergedDisplayDuration: mergedDisplayDuration,
 		DeleteMergedBranches:  deleteMergedBranches,
-	}, opts, nil
+	}, opts
 }
 
 func setupLogging(dataDir string) (*os.File, error) {
