@@ -10,10 +10,10 @@ import (
 
 func TestBuildRebaseScriptIsWellFormed(t *testing.T) {
 	script, err := BuildRebaseScript("/tmp/data", pr.PR{
-		RepoOwner:     "siderolabs",
-		RepoName:      "talos",
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
 		HeadRepoOwner: "utkuozdemir",
-		HeadRepoName:  "talos",
+		HeadRepoName:  "widgets",
 		HeadBranch:    "fix-thing",
 		BaseBranch:    "main",
 	}, 3)
@@ -56,10 +56,10 @@ func TestBuildRebaseScriptKeepsBranchNamesLiteral(t *testing.T) {
 	branch := "fix/$(echo injected)`echo injected`'\"$HOME"
 
 	script, err := BuildRebaseScript(t.TempDir(), pr.PR{
-		RepoOwner:     "siderolabs",
-		RepoName:      "talos",
+		RepoOwner:     "acme",
+		RepoName:      "widgets",
 		HeadRepoOwner: "contributor",
-		HeadRepoName:  "talos",
+		HeadRepoName:  "widgets",
 		HeadBranch:    branch,
 		BaseBranch:    "main",
 	}, 3)

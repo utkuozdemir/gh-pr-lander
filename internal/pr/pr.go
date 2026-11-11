@@ -82,12 +82,12 @@ type PR struct {
 	Number           int
 	Title            string
 	URL              string
-	Repo             string // "siderolabs/talos"
-	RepoName         string // "talos"
-	RepoOwner        string // "siderolabs"
-	HeadRepo         string // "utkuozdemir/cosi-runtime" (fork, may differ from upstream name)
+	Repo             string // "acme/widgets"
+	RepoName         string // "widgets"
+	RepoOwner        string // "acme"
+	HeadRepo         string // "you/widgets-fork" (fork, may differ from upstream name)
 	HeadRepoOwner    string // "utkuozdemir"
-	HeadRepoName     string // "cosi-runtime" (fork's actual repo name)
+	HeadRepoName     string // "widgets-fork" (fork's actual repo name)
 	BaseBranch       string // "main"
 	HeadBranch       string // "fix-grpc"
 	HeadSHA          string
@@ -126,7 +126,7 @@ type PR struct {
 }
 
 // RepoShort is the stable key used to identify a PR everywhere, e.g.
-// "siderolabs/talos#123".
+// "acme/widgets#123".
 func (p PR) RepoShort() string {
 	return fmt.Sprintf("%s#%d", p.Repo, p.Number)
 }

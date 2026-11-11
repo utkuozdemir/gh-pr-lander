@@ -123,10 +123,14 @@ func (c *Client) graphql(ctx context.Context, query string, variables map[string
 }
 
 // FetchPRs returns the authenticated user's open PRs across the given orgs,
-// including PRs opened by others that the user has authored or committed to.
-// Orgs are queried in parallel; a PR that appears under multiple orgs is
-// de-duplicated by its repo#number key.
+// or everywhere on GitHub when none is given, including PRs opened by others
+// that the user has authored or committed to. Orgs are queried in parallel; a
+// PR that appears under multiple orgs is de-duplicated by its repo#number key.
 func (c *Client) FetchPRs(ctx context.Context, orgs []string) ([]pr.PR, error) {
+	if len(orgs) == 0 {
+		orgs = []string{""} // one search with no org qualifier
+	}
+
 	results := make([][]pr.PR, len(orgs))
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -172,7 +176,10 @@ func (c *Client) FetchPRs(ctx context.Context, orgs []string) ([]pr.PR, error) {
 func (c *Client) fetchPRsForOrg(ctx context.Context, org string) ([]pr.PR, error) {
 	// involves:@me also matches PRs the user only commented on or was mentioned
 	// in. It is just a cheap candidate set, filtered down by touchedBy below.
-	searchQuery := "is:pr is:open involves:@me org:" + org
+	searchQuery := "is:pr is:open involves:@me"
+	if org != "" {
+		searchQuery += " org:" + org
+	}
 
 	var (
 		prs   []pr.PR
@@ -196,7 +203,7 @@ func (c *Client) fetchPRsForOrg(ctx context.Context, org string) ([]pr.PR, error
 				msgs[i] = e.Message
 			}
 
-			return nil, fmt.Errorf("graphql errors for org %s: %s", org, strings.Join(msgs, "; "))
+			return nil, fmt.Errorf("graphql errors for %q: %s", searchQuery, strings.Join(msgs, "; "))
 		}
 
 		for _, node := range resp.Data.Search.Nodes {

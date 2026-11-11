@@ -4,7 +4,7 @@ Lands your GitHub pull requests in repositories where commits are signed and mer
 
 ## The problem
 
-It was written for the Siderolabs workflow, where every commit is GPG-signed with a YubiKey. We never click GitHub's merge button. All merges are fast-forward only: after rebasing locally, the base branch is moved to the PR's head commit through the GitHub API. The entire commit history stays signed by the team, no GitHub-authored commits.
+Some teams sign every commit with a hardware key such as a YubiKey and never click GitHub's merge button. All merges are fast-forward only: after rebasing locally, the base branch is moved to the PR's head commit through the GitHub API. The entire commit history stays signed by the team, no GitHub-authored commits.
 
 This means a lot of rebasing. When someone merges before you, your PR goes stale. You stop what you're doing, switch branches, rebase, force push, wait for CI. Then you watch for CI to pass so you can merge before someone else merges and you go stale again. Flaky tests? Re-run, wait, hope nobody merges in the meantime. Multiply by the number of repos and open PRs.
 
@@ -64,7 +64,7 @@ gh-pr-lander
 Or `go run .` from source. All settings have defaults, `--help` for the full list:
 
 ```
---orgs                      comma-separated GitHub orgs (default: siderolabs,cosi-project)
+--orgs                      comma-separated GitHub orgs to watch (default: every PR of yours on GitHub)
 --interval                  poll interval when idle (default: 2m, minimum: 10s); polls faster automatically while CI is running
 --data-dir                  data directory (default: ~/.gh-pr-lander)
 --auto-max-retries          max autorerun attempts before giving up (default: 3)
@@ -107,7 +107,7 @@ The page lists your PRs with their status. Per PR you can switch automerge and a
 - **Only your own PRs:** a PR you took over from someone else is left to the terminal app, since its author can still push to it.
 - **Side by side with the terminal app:** both work on their own and keep their own switches. If both have automerge on for one PR, the second merge attempt changes nothing.
 
-A container image is published as `ghcr.io/utkuozdemir/gh-pr-lander` for each version tag. Its entrypoint is the binary, so pass `serve` and the flags as arguments.
+A container image is published as `ghcr.io/utkuozdemir/gh-pr-lander` for each version tag. In a deployment, name the organizations to watch with `--orgs`. Its entrypoint is the binary, so pass `serve` and the flags as arguments.
 
 ## Git identity and signing
 
@@ -116,7 +116,7 @@ Clones under `~/.gh-pr-lander/repos/` inherit your global gitconfig. If you need
 ```
 [user]
     name = Utku Ozdemir
-    email = utku.ozdemir@siderolabs.com
+    email = you@example.com
     signingkey = 11177A43C6E3752E682AC690DBD13117B0A14E93
 [commit]
     gpgSign = true

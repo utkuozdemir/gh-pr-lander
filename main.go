@@ -149,7 +149,7 @@ func parseFlags(args []string, serve bool) (config.Config, serveOptions, error) 
 		deleteMergedBranches  bool
 	)
 
-	fs.StringVar(&orgs, "orgs", "siderolabs,cosi-project", "comma-separated GitHub orgs to watch")
+	fs.StringVar(&orgs, "orgs", "", "comma-separated GitHub orgs to watch (default: every PR of yours on GitHub)")
 	fs.DurationVar(&pollInterval, "interval", 2*time.Minute, "poll interval (minimum 10s)")
 	fs.StringVar(&dataDir, "data-dir", defaultDataDir, "data directory for the db, and for repo clones and logs")
 	fs.IntVar(&autoMaxRetries, "auto-max-retries", 3, "max autorerun attempts before giving up")
@@ -195,10 +195,6 @@ func parseFlags(args []string, serve bool) (config.Config, serveOptions, error) 
 		if o != "" {
 			parsedOrgs = append(parsedOrgs, o)
 		}
-	}
-
-	if len(parsedOrgs) == 0 {
-		return config.Config{}, opts, errors.New("no orgs specified")
 	}
 
 	return config.Config{

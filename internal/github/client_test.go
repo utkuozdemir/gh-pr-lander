@@ -503,3 +503,34 @@ func TestFastForwardMergeMovesBaseBranchWithoutForce(t *testing.T) {
 		t.Fatalf("expected a server error that is not a refusal, got %v", err)
 	}
 }
+
+func TestFetchPRsWithNoOrgsSearchesEverywhere(t *testing.T) {
+	var queries []string
+
+	client := &Client{
+		token:    "token",
+		username: "me",
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			var payload struct {
+				Variables map[string]any `json:"variables"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode request: %v", err)
+			}
+
+			query, _ := payload.Variables["query"].(string)
+			queries = append(queries, query)
+
+			return testJSONResponse(graphQLPRPage(false, "", graphQLPRNode("any/repo", 1, "sha1")), nil), nil
+		})},
+	}
+
+	prs, err := client.FetchPRs(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("FetchPRs: %v", err)
+	}
+
+	if len(prs) != 1 || len(queries) != 1 || strings.Contains(queries[0], "org:") {
+		t.Fatalf("expected one search with no org qualifier, got %d PRs and queries %q", len(prs), queries)
+	}
+}

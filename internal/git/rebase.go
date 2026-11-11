@@ -1,7 +1,7 @@
 // Package git builds the shell script that performs a local, signed rebase.
 //
 // The rebase intentionally runs as a real foreground process (not via the Go
-// git libraries) because every Siderolabs commit is GPG-signed with a YubiKey,
+// git libraries) because commits are signed with a hardware key such as a YubiKey,
 // which requires an interactive touch/PIN prompt. The TUI shells out to this
 // script with tea.ExecProcess so the user sees git output and can interact
 // with the YubiKey.
@@ -26,7 +26,7 @@ func ConfigPath() string {
 }
 
 // RepoDir returns the path where the tool keeps its own clone of a fork, e.g.
-// ~/.gh-pr-lander/repos/utkuozdemir/cosi-runtime. The tool never touches the
+// ~/.gh-pr-lander/repos/you/widgets-fork. The tool never touches the
 // user's own working directories.
 func RepoDir(dataDir, forkOwner, forkName string) string {
 	return filepath.Join(dataDir, "repos", forkOwner, forkName)

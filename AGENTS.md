@@ -13,9 +13,9 @@ honest — if something here turns out to be wrong, fix it.
 
 `gh-pr-lander` lands its owner's GitHub pull requests in a workflow with
 signed commits and fast-forward merges. It has a terminal (Bubble Tea) front
-end and a server with a page. It was written for the Siderolabs PR workflow
-and was called `sidero-rebaser` until Nov 2026. Nothing in the code is specific
-to Siderolabs any more, except the default of `--orgs`. At Siderolabs every
+end and a server with a page. Nothing in it is specific to one company or
+organization: which organizations to watch is `--orgs`, and with none given it
+watches every PR of its owner on GitHub. In the workflow it serves every
 commit is GPG-signed with a YubiKey, the GitHub
 merge button is never used, and merges are fast-forwards of the base branch to
 the PR's head commit after the author has rebased locally onto the latest base.
@@ -182,7 +182,7 @@ the page can show the real outcome.
   re-run started by the other one is covered by the "re-runs started
   elsewhere" guard.
 - **Only the owner's own PRs.** `handleFetch` drops taken-over PRs
-  (`TakenOverFrom != ""`). The branch protection of omni and talos does not
+  (`TakenOverFrom != ""`). Branch protection often does not
   dismiss approvals on a new push, so a contributor could push a commit to an
   approved PR and unattended automerge would merge it unseen.
 - **Every form carries the head SHA the page showed** and `find` refuses the
@@ -209,21 +209,23 @@ and the list update together. htmx is embedded (`static/htmx.min.js`, version
 
 **Shipping.** `Dockerfile` builds a distroless nonroot image and
 `.github/workflows/image.yml` pushes it to `ghcr.io/utkuozdemir/gh-pr-lander`
-for both amd64 and arm64 when a `v*` tag is pushed. The repo is private, so the
+for both amd64 and arm64 when a `v*` tag is pushed, and creates the GitHub
+release for the tag. The repo is private, so the
 package starts private too and has to be made public once in the package
 settings. Deployment manifests live in the owner's homelab repo, not here.
 
 ## Merging: fast-forward through the refs API
 
-`talos-bot` and its `/m` comment were retired in Nov 2026. `m` and automerge now
+The tool used to merge by commenting `/m`, which a bot turned into a
+fast-forward. That bot was retired in Nov 2026. `m` and automerge now
 call `Client.FastForwardMerge`: `PATCH /repos/{repo}/git/refs/heads/{base}` with
 the PR's head SHA and `force: false`. GitHub moves the base branch only if that
 is a fast-forward (422 `Update is not a fast forward` otherwise) and marks the
 PR merged a moment later. No commit is created, so SHAs and signatures stay.
 
 - **Branch protection is the real gate.** It applies to this ref update like to
-  any push. kres sets `enforce_admins: true` with no bypass allowances
-  (checked on omni and omni-infra-provider-bare-metal), so GitHub refuses an
+  any push. The repositories this was built against set `enforce_admins:
+  true` with no bypass allowances, so GitHub refuses an
   unapproved, red or behind PR even for admins. `StatusReady` only decides when
   to try. That is why there is no pre-merge re-check in the tool.
 - **The SHA sent is the one from the fetch that was judged ready** (`p.HeadSHA`),
@@ -356,7 +358,7 @@ never sets `MergeBlocked`.
 The GraphQL rollup and the Actions REST API disagree for a while after a job
 fails. The rollup reports the failed check at once (`CIFailed`), but the
 workflow run that owns it stays `in_progress` with no `conclusion` until every
-other job in that run finishes (on omni that is several minutes of e2e jobs).
+other job in that run finishes (with long end-to-end jobs that is several minutes).
 GitHub only lets you re-run failed jobs of a completed run, so in that window
 there is genuinely nothing to re-run. `WorkflowSummary.Running` /
 `pr.PR.RunningWorkflowRuns` carry the not-yet-completed run count so `t` can say
@@ -429,7 +431,7 @@ asleep mid-push) report back instead of holding `model.rebasing` forever.
 
 ## Build / test / lint
 
-Tooling mirrors the other `utkuozdemir`/Siderolabs repos (e.g. pv-migrate),
+Tooling mirrors the other `utkuozdemir` repos (e.g. pv-migrate),
 scaled down for a single binary. Use [Task](https://taskfile.dev):
 
 ```
@@ -445,7 +447,7 @@ task release    # tag the next version (svu) and push it, VERSION=vX.Y.Z to name
 Or the raw commands: `go build ./...`, `go test ./...`, `golangci-lint run ./...`.
 
 - **Linters**: `.golangci.yml` is `default: all` with a curated disable list
-  (config schema `version: "2"`). On top of the standard Siderolabs disables we
+  (config schema `version: "2"`). On top of the usual disables we
   also turn off the linters that fight Bubble Tea / GitHub-client idioms
   (`ireturn`, `recvcheck`, `varnamelen`, `cyclop`, `funlen`, `funcorder`,
   `tagliatelle`, `gosmopolitan`, `paralleltest`, `lll`) — each has a one-line
@@ -464,8 +466,9 @@ Or the raw commands: `go build ./...`, `go test ./...`, `golangci-lint run ./...
   tests, lint, build). A release is only a version tag: `task release` checks
   that HEAD is the tip of `origin/main` with a clean tree, picks the next
   version with svu from the commit types since the last tag, and pushes an
-  annotated, unsigned tag, which starts `.github/workflows/image.yml`. There
-  are no binaries, changelog or goreleaser yet, on purpose.
+  annotated, unsigned tag, which starts `.github/workflows/image.yml`. That
+  workflow pushes the image and then creates a GitHub release with generated
+  notes. There are no binaries or goreleaser yet, on purpose.
 
 Go version: see `go.mod` (currently 1.26.x). Uses generics-era stdlib helpers
 (`min`/`max`, `strings.SplitSeq`) and Go 1.22+ loop semantics (no `x := x`
@@ -507,7 +510,7 @@ the generated assignment in real bash to prove it stays literal.
   were mentioned in), and `touchedBy` keeps a PR only if you opened it or
   authored or committed any of its last 100 commits (`allCommits` alias in
   `prQuery`). There is no search qualifier for "committed to", and scanning
-  every open org PR is not viable (siderolabs has ~340, ~8s per page, 502s).
+  every open org PR is not viable (one org had ~340, ~8s per page, 502s).
   Blind spot: a PR you pushed to without ever commenting, being assigned or
   mentioned is never a candidate. Assigning yourself fixes that.
 - **GraphQL cost is driven by the search page size.** GitHub charges by the
@@ -518,7 +521,7 @@ the generated assignment in real bash to prove it stays literal.
   nested connections.
 - **`mergeStateStatus` only says `BEHIND` when the base branch enforces it**:
   "require up to date" on, plus at least one required check. Without that
-  (ops-managed-siderolabs has strict on but zero required checks) a behind PR
+  (seen on a repo with strict on but zero required checks) a behind PR
   reports `CLEAN`/`BLOCKED`/`UNSTABLE`. So `prFromNode` also compares
   `baseRefOid` (the commit the PR is based on) with the base branch tip, and
   marks the PR `BaseBehind` with `BehindUnenforced` set, shown as a blue
@@ -536,8 +539,8 @@ the generated assignment in real bash to prove it stays literal.
   `detectMerged`.
 - **`db.yaml` only stores enabled flags, the autorebase queue order and the
   last autorerun time.** Don't add derived state there, derive it from the API.
-- **This is a personal repo, not a Siderolabs one**, even though the tool serves
-  the Siderolabs workflow. Commits are not GPG-signed (no YubiKey touch) and
+- **Nothing in this repo is signed**, even though the tool serves a
+  signed-commit workflow. Commits are not GPG-signed (no YubiKey touch) and
   only carry the DCO signoff. The global git config signs by default, so commit
   with `git commit --no-gpg-sign -s`. The title is
   `type: imperative summary`, and the body is prose with each paragraph on a
