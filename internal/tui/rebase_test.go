@@ -351,3 +351,28 @@ func TestManualRebaseReservesTheClone(t *testing.T) {
 		t.Fatalf("expected the reservation to clear, got %q", got)
 	}
 }
+
+// A PR whose automerge waits for a condition would be rebased, run CI and then
+// sit at the head of the queue without merging, so it does not hold the queue.
+func TestAutoRebaseSkipsAPRThatAutomergeHoldsBack(t *testing.T) {
+	waiting := queuePR(1, pr.BaseBehind)
+	waiting.Approvals = 1
+
+	m := queueModel(t,
+		[]pr.PR{waiting, queuePR(2, pr.BaseBehind)},
+		map[string]int{"org/repo#1": 1, "org/repo#2": 2},
+	)
+	m.AutoMerge = map[string]bool{"org/repo#1": true}
+	m.MinApprovals = map[string]int{"org/repo#1": 2}
+
+	if got := nextKey(m); got != "org/repo#2" {
+		t.Fatalf("expected the queue to go to the PR that can land, got %q", got)
+	}
+
+	// With automerge off the owner merges by hand, so the condition means nothing.
+	m.AutoMerge = map[string]bool{}
+
+	if got := nextKey(m); got != "org/repo#1" {
+		t.Fatalf("expected the first PR to hold the queue again, got %q", got)
+	}
+}

@@ -219,3 +219,99 @@ func TestRefreshAnswersWithTheFreshList(t *testing.T) {
 		t.Fatalf("expected the answer to show the newly fetched PR, got %q", body)
 	}
 }
+
+// The page shows the conditions on every PR, so they can be set before
+// automerge is turned on. Turning it on for a ready PR merges at once.
+func TestConditionsOnThePage(t *testing.T) {
+	p := readyPR(1, "aaa")
+	p.Approvals = 1
+
+	s, client := testServer(t, p)
+	form := url.Values{"key": {"org/repo#1"}, "sha": {"aaa"}}
+
+	form.Set("kind", "approvals")
+	form.Set("value", "2")
+
+	if _, body := post(t, s, "/condition", form, nil); !strings.Contains(body, `value="2" aria-pressed="true"`) {
+		t.Fatalf("expected the condition to be set with automerge off, got %q", body)
+	}
+
+	form.Set("kind", "automerge")
+
+	_, body := post(t, s, "/toggle", form, nil)
+	s.works.Wait()
+
+	if len(client.merges()) != 0 || !strings.Contains(body, "Automerge waits for: 1 more approval") {
+		t.Fatalf("expected automerge to hold back the ready PR, merges %v, body %q", client.merges(), body)
+	}
+
+	p.Approvals = 2
+	s.handleFetch(github.FetchResult{PRs: []pr.PR{p}})
+	s.works.Wait()
+
+	if len(client.merges()) != 1 {
+		t.Fatalf("expected a merge once the second approval is there, got %v", client.merges())
+	}
+}
+
+func TestConditionFormIsCheckedLikeTheOthers(t *testing.T) {
+	p := readyPR(1, "aaa")
+	p.ReviewThreads = 1
+
+	s, client := testServer(t, p)
+	form := url.Values{"key": {"org/repo#1"}, "sha": {"aaa"}, "kind": {"comments"}, "value": {"resolved"}}
+
+	// A stale page must not change what automerge waits for.
+	stale := url.Values{"key": {"org/repo#1"}, "sha": {"old"}, "kind": {"comments"}, "value": {"resolved"}}
+	if _, body := post(t, s, "/condition", stale, nil); !strings.Contains(body, "new commit") {
+		t.Fatalf("expected a stale page to be refused, got %q", body)
+	}
+
+	post(t, s, "/condition", form, nil)
+	post(t, s, "/toggle", url.Values{"key": {"org/repo#1"}, "sha": {"aaa"}, "kind": {"automerge"}}, nil)
+	s.works.Wait()
+
+	if len(client.merges()) != 0 {
+		t.Fatal("expected automerge to wait for the unresolved comment")
+	}
+
+	// A value the page never sends is refused. Read as "any", it would drop
+	// the condition and merge over the comment.
+	form.Set("value", "")
+
+	if _, body := post(t, s, "/condition", form, nil); !strings.Contains(body, "unknown automerge condition") {
+		t.Fatalf("expected an unknown value to be refused, got %q", body)
+	}
+
+	s.works.Wait()
+
+	if len(client.merges()) != 0 {
+		t.Fatal("expected no merge after a refused value")
+	}
+
+	// Dropping the condition merges the ready PR right away.
+	form.Set("value", "any")
+	post(t, s, "/condition", form, nil)
+	s.works.Wait()
+
+	if len(client.merges()) != 1 {
+		t.Fatalf("expected a merge once the condition is dropped, got %v", client.merges())
+	}
+}
+
+func TestReviewMarkShowsApprovalsInEveryState(t *testing.T) {
+	for status, want := range map[pr.ReviewStatus]string{
+		pr.ReviewApproved:         "approved (2)",
+		pr.ReviewPending:          "pending (2)",
+		pr.ReviewChangesRequested: "changes requested (2)",
+		pr.ReviewNone:             "approved (2)",
+	} {
+		if got := reviewMark(pr.PR{ReviewStatus: status, Approvals: 2}).Text; got != want {
+			t.Fatalf("status %v: expected %q, got %q", status, want, got)
+		}
+	}
+
+	if got := reviewMark(pr.PR{ReviewStatus: pr.ReviewNone}).Text; got != "none" {
+		t.Fatalf("expected %q with no approvals, got %q", "none", got)
+	}
+}

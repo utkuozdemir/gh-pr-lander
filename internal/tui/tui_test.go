@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"github.com/utkuozdemir/gh-pr-lander/internal/config"
 	"github.com/utkuozdemir/gh-pr-lander/internal/engine"
 	"github.com/utkuozdemir/gh-pr-lander/internal/github"
@@ -383,6 +385,8 @@ func testAutoToggleModel(t *testing.T, p pr.PR) model {
 			},
 			PRs:              []pr.PR{p},
 			AutoMerge:        map[string]bool{},
+			MinApprovals:     map[string]int{},
+			ResolvedOnly:     map[string]bool{},
 			AutoRerun:        map[string]bool{},
 			LastAutoRerun:    map[string]time.Time{},
 			MergeFailed:      map[string]bool{},
@@ -391,5 +395,46 @@ func testAutoToggleModel(t *testing.T, p pr.PR) model {
 			RerunInFlight:    map[string]time.Time{},
 			RerunInFlightSHA: map[string]string{},
 		},
+	}
+}
+
+func TestConditionKeysWorkBeforeAutomergeAndShowOnTheRow(t *testing.T) {
+	p := pr.PR{Repo: "org/repo", Number: 1, Approvals: 1, ReviewThreads: 1}
+	m := testAutoToggleModel(t, p)
+	m.width = 120
+
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	updated, _ = updated.(model).handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("c")})
+	m = updated.(model)
+
+	if row := m.renderActivePR(p, false); !strings.Contains(row, "automerge off (2 approvals, comments resolved)") {
+		t.Fatalf("expected the row to show the conditions set ahead of automerge, got %q", row)
+	}
+
+	if !strings.Contains(m.status, "automerge off (2 approvals, comments resolved)") {
+		t.Fatalf("expected the status to say automerge is off, got %q", m.status)
+	}
+
+	m.AutoMerge["org/repo#1"] = true
+
+	if row := m.renderActivePR(
+		p,
+		false,
+	); !strings.Contains(
+		row,
+		"automerge waits: 1 more approval, 1 unresolved comment",
+	) {
+		t.Fatalf("expected the row to say what automerge waits for, got %q", row)
+	}
+
+	p.Approvals, p.ResolvedReviewThreads = 2, 1
+
+	if row := m.renderActivePR(p, false); !strings.Contains(row, "automerge (2 approvals, comments resolved)") {
+		t.Fatalf("expected the row to show the conditions once they are met, got %q", row)
+	}
+
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	if got := updated.(model); got.MinApprovals["org/repo#1"] != 0 {
+		t.Fatalf("expected 1 to drop the approvals condition, got %d", got.MinApprovals["org/repo#1"])
 	}
 }

@@ -296,6 +296,12 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.toggleAuto(engine.Automerge)
 	case "A":
 		return m.toggleAuto(engine.Autorerun)
+	case "1", "2", "3":
+		return m.setCondition(func(p pr.PR) (engine.Work, error) {
+			return m.SetMinApprovals(p, int(msg.String()[0]-'0'))
+		})
+	case "c":
+		return m.setCondition(m.ToggleResolvedOnly)
 	case "b":
 		return m.toggleAutoRebase()
 	case "K":
@@ -443,6 +449,31 @@ func (m model) toggleAuto(kind engine.Kind) (tea.Model, tea.Cmd) {
 		m.status = indicatorAuto.Render("⚡ " + label + " enabled for " + key + "; checking now")
 	default:
 		m.status = indicatorAuto.Render("⚡ " + label + " enabled for " + key)
+	}
+
+	return m, tea.Batch(clearStatusCmd(), workCmd(work))
+}
+
+// setCondition changes one automerge condition of the selected PR. It works
+// with automerge off too, so the conditions can be in place before it goes on.
+func (m model) setCondition(set func(pr.PR) (engine.Work, error)) (tea.Model, tea.Cmd) {
+	item, ok := m.selectedItem()
+	if !ok || item.merged {
+		return m, nil
+	}
+
+	key := item.pr.RepoShort()
+
+	work, err := set(item.pr)
+	if err != nil {
+		m.status = errorStyle.Render("✗ Failed to save db.yaml: " + err.Error())
+
+		return m, clearStatusCmd()
+	}
+
+	m.status = indicatorNone.Render(key + ": " + m.automergeText(item.pr))
+	if m.AutoMerge[key] {
+		m.status = indicatorAuto.Render("⚡ " + key + ": " + m.automergeText(item.pr))
 	}
 
 	return m, tea.Batch(clearStatusCmd(), workCmd(work))

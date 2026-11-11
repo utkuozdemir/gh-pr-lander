@@ -44,6 +44,8 @@ func testState(t *testing.T, p pr.PR) *State {
 		},
 		PRs:              []pr.PR{p},
 		AutoMerge:        map[string]bool{},
+		MinApprovals:     map[string]int{},
+		ResolvedOnly:     map[string]bool{},
 		AutoRerun:        map[string]bool{},
 		LastAutoRerun:    map[string]time.Time{},
 		LastRerun:        map[string]time.Time{},

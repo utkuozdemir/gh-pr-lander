@@ -20,7 +20,7 @@ A PR that looks approved and green but that GitHub still blocks from merging sho
 
 - `r` rebases. Drops into a real local `git rebase` so your YubiKey signs the commits. Returns to the TUI after a few seconds on success.
 - `m` fast-forwards the base branch to the PR's head commit. Branch protection still applies, so GitHub refuses a PR that is unapproved, red or behind.
-- `a` toggles automerge. Merges automatically when the PR is ready: approved, up to date, and every required check green. A check that is not required may still be running. If GitHub refuses the merge, it tries again only after the PR gets a new head commit. A network or server error is retried after the cooldown.
+- `a` toggles automerge. Merges automatically when the PR is ready: approved, up to date, and every required check green. A check that is not required may still be running. You can make automerge on a PR wait for more: `2` or `3` asks for that many approvals (`1` goes back to whatever the repository requires), and `c` makes it wait until every review comment is resolved. Set them before turning automerge on, since automerge merges a ready PR at once. These conditions hold back automerge only, `m` still merges whenever GitHub would accept it, and they stay with the PR until it is merged or closed. If GitHub refuses the merge, it tries again only after the PR gets a new head commit. A network or server error is retried after the cooldown.
 - `A` toggles autorerun. Re-runs failed CI jobs automatically. Gives up based on workflow `run_attempt` from the GitHub API.
 - `b` toggles autorebase. Rebases the PR in the background when it falls behind its base branch, one PR at a time per repo and base branch (see below). A failed rebase, usually a missed YubiKey touch, is not retried: the row shows why it failed, a notification asks for you, and its queue waits until you press `b` on it again to retry, or rebase it with `r`.
 - `t` re-runs failed CI jobs manually.
@@ -84,6 +84,8 @@ Or `go run .` from source. All settings have defaults, `--help` for the full lis
 | `r` | Rebase (local git, YubiKey signing) |
 | `m` | Fast-forward merge |
 | `a` | Toggle automerge for selected PR |
+| `1` / `2` / `3` | Approvals automerge waits for (`1` is the repository's own rule) |
+| `c` | Make automerge wait until every review comment is resolved |
 | `A` | Toggle autorerun for selected PR |
 | `b` | Toggle autorebase for selected PR |
 | `K` / `J` | Move selected PR up / down its autorebase queue |
@@ -101,7 +103,7 @@ The terminal app only works while it runs, and merging needs no YubiKey. `gh-pr-
 gh-pr-lander serve --listen :8080 --token-file /path/to/token --data-dir /data
 ```
 
-The page lists your PRs with their status. Per PR you can switch automerge and autorerun, merge now, and re-run failed jobs. The server does those, and deletes your fork branch after a merge. It never rebases, since that needs the YubiKey. A PR that is behind waits for the terminal app.
+The page lists your PRs with their status. Per PR you can switch automerge and autorerun, merge now, and re-run failed jobs. Next to the Automerge switch, in the same box, are the two things it can wait for: `Approvals` (default, 2 or 3) and `Comments` (any or resolved). Set them before turning automerge on. When a condition is holding automerge back, the row says what it waits for. The server does those, and deletes your fork branch after a merge. It never rebases, since that needs the YubiKey. A PR that is behind waits for the terminal app.
 
 - **Token:** `--token-file` names a file holding a GitHub token that can write to the repositories (a classic token with the `repo` scope works). Without the flag it falls back to `GITHUB_TOKEN`, `GH_TOKEN` or `gh`, which is handy for trying it locally.
 - **State:** the switches are kept in `db.yaml` under `--data-dir` (default `~/.gh-pr-lander/server`). Give it a volume that survives restarts.

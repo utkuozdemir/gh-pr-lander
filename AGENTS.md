@@ -346,6 +346,57 @@ only ever push toward `CIRunning`, so they compose without fighting. Tested in
 `internal/engine/auto_test.go` (settling) and `internal/github/client_test.go`
 (rollup state), no network or timing flakiness.
 
+## Automerge conditions
+
+`StatusReady` means GitHub would accept the merge. The owner sometimes wants
+automerge to wait for more than that, per PR: a second or third approval, or
+no unresolved review comment. `internal/engine/conditions.go` holds them
+(`MinApprovals`, `ResolvedOnly`), `shouldAutoMerge` checks them, and
+`AutomergeWaitsFor` puts what is missing into words for both front ends.
+
+- **They hold back automerge only.** `CheckMerge` ignores them, so `m` and
+  "Merge now" go through whenever the PR is ready. When the owner merges by
+  hand, they have looked.
+- **They are set before automerge goes on, and stay with the PR.** Turning
+  automerge on for a ready PR merges it in the same moment, so a condition
+  that could only be set afterwards would always come too late. They can be
+  changed with automerge on or off, survive turning it off, and are dropped
+  only when the PR is confirmed gone (`cleanupAuto`). The first design tied
+  them to automerge being on, and the owner caught the race on first use.
+- **No approvals condition means the repository's own rule**, not "1". A
+  literal 1 would start blocking PRs in repos that require no approval. The
+  steps are none, 2 and 3 (`MaxApprovals`).
+- **An approval** is a person with write access whose latest review approves:
+  `latestOpinionatedReviews(writersOnly: true)`, counted into `pr.PR.Approvals`.
+  It replaced an unused `reviews(last: 20)` in the query, so the cost stayed 1.
+  The count is shown in every review state. Where the repository asks for no
+  review, `reviewDecision` is null even with approvals, and the row then
+  shows "approved (n)" instead of "none".
+- **Unresolved** means not marked resolved, outdated or not, which is how
+  GitHub's own "require conversation resolution" rule counts. Threads past the
+  first 100 count as unresolved.
+- **No notification while a condition holds automerge back.** "Ready to merge"
+  is already quiet when automerge is on, and it stays that way.
+- **The terminal app and the server each have their own conditions**, like
+  their switches. With automerge on for one PR in both, the looser one wins.
+  The owner knows and accepts this: one PR, one place.
+- **Front ends.** Terminal: `1`/`2`/`3` and `c`, always available. The row
+  shows `automerge off (2 approvals)` for conditions set ahead, `automerge (2
+  approvals)` once on, and `automerge waits: 1 more approval` while holding
+  back. Page: automerge and its conditions are one box (`.auto`), the
+  switch on the left and the two settings stacked on the right, each a row of
+  buttons that shows every choice (the owner picked this over a button that
+  cycles on tap: with three values, seeing them beats remembering where the
+  cycle is). Each row is one form, and the button pressed carries the value:
+  `POST /condition` with `kind=approvals` and `value` 1 to 3, or `kind=comments`
+  and `value` any or resolved. Any other value is refused: read as "any", a
+  missing value would drop the condition and merge over an open comment. On a
+  wide screen the box is one bar as high as the other buttons, and on a phone
+  the settings stack next to the switch, sized to fit a 360px screen. Chrome
+  headless cannot open a window narrower than 500px, so check phone widths by
+  loading the page in an `<iframe width="360">` and taking a screenshot of
+  that.
+
 ## Checks that are not required do not hold up a merge (`UNSTABLE`)
 
 A PR whose required checks are all green can be merged while other checks are
@@ -418,7 +469,10 @@ base branch behind again, so rebasing them in parallel only starves CI runners.
 swapped by `K`/`J`). Everything else is derived from the current fetch:
 
 - **Eligible** (`rebaseEligible`): not draft, no conflict, review not pending
-  or changes requested, and CI not failed unless `autorerunWillHandle` (a flaky
+  or changes requested, automerge not held back by a condition (such a PR
+  would be rebased, run CI and then sit at the head of the queue without
+  merging, starving the PRs behind it), and CI not failed unless
+  `autorerunWillHandle` (a flaky
   failure autorerun is about to re-run would otherwise hand the queue on, and
   both PRs would run CI). Only eligible PRs hold the queue, since rebasing a PR
   that cannot merge only burns CI.
@@ -551,8 +605,9 @@ the generated assignment in real bash to prove it stays literal.
 - **Review threads** come from the same GraphQL search
   (`reviewThreads(first: 100)`). Threads past the first 100 are not fetched and
   count as unresolved, the same "unknown is not good" rule `computeCIStatus`
-  uses for unfetched checks. The `Comments x/y` indicator is display only. It
-  does not gate automerge.
+  uses for unfetched checks. The `Comments x/y` indicator holds back automerge
+  only when the owner set that condition on the PR (see "Automerge
+  conditions").
 - **Taken-over PRs** (a community PR you rebased, re-signed or added commits
   to) are listed with a `⇄ @author` tag. The search is `involves:@me`, which
   is only a cheap candidate set (it also matches PRs you merely commented on or

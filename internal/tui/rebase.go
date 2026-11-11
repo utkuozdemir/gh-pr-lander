@@ -77,11 +77,15 @@ func (m model) rebaseQueues() map[string][]pr.PR {
 // rebaseEligible reports whether a PR could merge once it is up to date, so it
 // is worth holding the queue for. Unapproved, failing or conflicting PRs are
 // skipped, since rebasing them only burns CI. A failure autorerun is about to
-// re-run does not count, since it is usually a flake. A PR whose rebase failed
+// re-run does not count, since it is usually a flake. A PR whose automerge is
+// held back by a condition is skipped too: it would be rebased, run CI and
+// then sit at the head of the queue without merging. A PR whose rebase failed
 // stays eligible, so it keeps the queue paused instead of handing it on while
 // the owner is away.
 func (m model) rebaseEligible(p pr.PR) bool {
-	return !p.IsDraft &&
+	heldBack := m.AutoMerge[p.RepoShort()] && len(m.AutomergeWaitsFor(p)) > 0
+
+	return !p.IsDraft && !heldBack &&
 		p.BaseStatus != pr.BaseConflict &&
 		(p.CIStatus != pr.CIFailed || m.AutorerunWillHandle(p)) &&
 		p.ReviewStatus != pr.ReviewPending &&

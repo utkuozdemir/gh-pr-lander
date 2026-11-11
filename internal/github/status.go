@@ -46,6 +46,13 @@ func prFromNode(node prNode) pr.PR {
 		}
 	}
 
+	// Each person with write access counts once, by their latest review.
+	for _, review := range node.LatestReviews.Nodes {
+		if strings.EqualFold(review.State, "APPROVED") {
+			p.Approvals++
+		}
+	}
+
 	p.BaseStatus = computeBaseStatus(node)
 	if p.BaseStatus == pr.BaseSynced && behindBase(node, p.HeadSHA) {
 		p.BaseStatus = pr.BaseBehind

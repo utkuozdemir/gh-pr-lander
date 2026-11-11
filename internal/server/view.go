@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
@@ -51,7 +52,13 @@ type prView struct {
 	CI     mark
 	Review mark
 
-	AutoMerge   bool
+	AutoMerge bool
+	// Approvals and ResolvedOnly are the automerge conditions, and Waits is
+	// what they still ask for.
+	Approvals    int // 1 means no condition: the repository's own rule
+	ResolvedOnly bool
+	Waits        string
+
 	AutoRerun   bool
 	MergeGaveUp bool
 	RerunGaveUp bool
@@ -86,22 +93,28 @@ func (s *Server) snapshot() pageData {
 		key := p.RepoShort()
 
 		v := prView{
-			Key:         key,
-			Repo:        p.Repo,
-			Number:      p.Number,
-			Title:       p.Title,
-			URL:         p.URL,
-			SHA:         p.HeadSHA,
-			Badge:       badge(p.OverallStatus),
-			Base:        baseMark(p),
-			CI:          ciMark(p),
-			Review:      reviewMark(p.ReviewStatus),
-			AutoMerge:   s.state.AutoMerge[key],
-			AutoRerun:   s.state.AutoRerun[key],
-			MergeGaveUp: s.state.IsMergeFailed(key),
-			RerunGaveUp: s.state.IsRerunFailed(key),
-			CanMerge:    p.OverallStatus == pr.StatusReady,
-			CanRerun:    p.CIStatus == pr.CIFailed,
+			Key:          key,
+			Repo:         p.Repo,
+			Number:       p.Number,
+			Title:        p.Title,
+			URL:          p.URL,
+			SHA:          p.HeadSHA,
+			Badge:        badge(p.OverallStatus),
+			Base:         baseMark(p),
+			CI:           ciMark(p),
+			Review:       reviewMark(p),
+			AutoMerge:    s.state.AutoMerge[key],
+			Approvals:    max(s.state.MinApprovals[key], 1),
+			ResolvedOnly: s.state.ResolvedOnly[key],
+			AutoRerun:    s.state.AutoRerun[key],
+			MergeGaveUp:  s.state.IsMergeFailed(key),
+			RerunGaveUp:  s.state.IsRerunFailed(key),
+			CanMerge:     p.OverallStatus == pr.StatusReady,
+			CanRerun:     p.CIStatus == pr.CIFailed,
+		}
+
+		if v.AutoMerge {
+			v.Waits = strings.Join(s.state.AutomergeWaitsFor(p), ", ")
 		}
 
 		switch {
@@ -207,15 +220,27 @@ func ciMark(p pr.PR) mark {
 	}
 }
 
-func reviewMark(status pr.ReviewStatus) mark {
-	switch status {
+// reviewMark is the review state, with the number of approvals behind it when
+// there are any.
+func reviewMark(p pr.PR) mark {
+	approvals := ""
+	if p.Approvals > 0 {
+		approvals = fmt.Sprintf(" (%d)", p.Approvals)
+	}
+
+	switch p.ReviewStatus {
 	case pr.ReviewApproved:
-		return mark{"approved", toneOk}
+		return mark{"approved" + approvals, toneOk}
 	case pr.ReviewChangesRequested:
-		return mark{"changes requested", toneFail}
+		return mark{"changes requested" + approvals, toneFail}
 	case pr.ReviewPending:
-		return mark{"pending", toneWarn}
+		return mark{"pending" + approvals, toneWarn}
 	case pr.ReviewNone:
+		// The repository asks for no review, but people approved anyway.
+		if p.Approvals > 0 {
+			return mark{"approved" + approvals, toneOk}
+		}
+
 		return mark{"none", toneNone}
 	default:
 		return mark{}

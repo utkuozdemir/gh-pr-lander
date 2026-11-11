@@ -16,6 +16,18 @@ _Avoid_: mergeable, green
 A standing request on one pull request to fast-forward merge it as soon as it becomes ready.
 _Avoid_: merge when ready, auto-merge (GitHub's own feature of that name is a different thing)
 
+**Approval**:
+A person with write access to the repository whose latest review of the pull request approves it. Each person counts once.
+_Avoid_: review, LGTM, approving review
+
+**Unresolved comment**:
+A review comment thread that nobody has marked as resolved, whether or not the code under it has changed since.
+_Avoid_: open thread, outdated comment
+
+**Automerge condition**:
+An extra requirement the owner sets on one pull request's automerge, on top of ready: a minimum number of approvals, or no unresolved comments. It is set before automerge is turned on and stays with the pull request. It holds back automerge only, never a merge the owner starts.
+_Avoid_: merge rule, gate
+
 **Terminal app**:
 The tool as run on the owner's own machine, where signing is possible. It works on its own, with no server.
 

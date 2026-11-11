@@ -54,7 +54,8 @@ func (s *State) autoRerunWork(p pr.PR) Work {
 func (s *State) shouldAutoMerge(p pr.PR) bool {
 	key := p.RepoShort()
 
-	return s.AutoMerge[key] && !s.MergeFailed[key] && p.OverallStatus == pr.StatusReady
+	return s.AutoMerge[key] && !s.MergeFailed[key] && p.OverallStatus == pr.StatusReady &&
+		len(s.AutomergeWaitsFor(p)) == 0
 }
 
 func (s *State) shouldAutoRerun(p pr.PR) bool {

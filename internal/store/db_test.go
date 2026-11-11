@@ -64,3 +64,30 @@ func TestLoadReturnsMalformedYAMLError(t *testing.T) {
 		t.Fatal("expected malformed YAML error")
 	}
 }
+
+func TestSaveLoadKeepsConditionsWithAutomergeOnOrOff(t *testing.T) {
+	dir := t.TempDir()
+	approvals := map[string]int{"org/repo#1": 2, "org/repo#9": 3}
+	resolved := map[string]bool{"org/repo#1": true, "org/repo#9": true}
+
+	if err := Save(dir, DB{
+		AutoMerge:          map[string]bool{"org/repo#1": true},
+		AutoMergeApprovals: approvals,
+		AutoMergeResolved:  resolved,
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	db, err := Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if !maps.Equal(db.AutoMergeApprovals, approvals) {
+		t.Fatalf("unexpected approvals conditions: %v", db.AutoMergeApprovals)
+	}
+
+	if !maps.Equal(db.AutoMergeResolved, resolved) {
+		t.Fatalf("unexpected comments conditions: %v", db.AutoMergeResolved)
+	}
+}

@@ -51,8 +51,13 @@ type State struct {
 	PRs     []pr.PR
 	PrevPRs []pr.PR
 
-	LastRerun      map[string]time.Time // manual rerun cooldown
-	AutoMerge      map[string]bool      // enabled flag, persisted in db.yaml
+	LastRerun map[string]time.Time // manual rerun cooldown
+	AutoMerge map[string]bool      // enabled flag, persisted in db.yaml
+	// MinApprovals and ResolvedOnly are the automerge conditions, persisted in
+	// db.yaml. See conditions.go.
+	MinApprovals map[string]int
+	ResolvedOnly map[string]bool
+
 	AutoRerun      map[string]bool      // enabled flag, persisted in db.yaml
 	LastAutoRerun  map[string]time.Time // persisted auto-rerun cooldown
 	AutoRebase     map[string]int       // queue order, persisted in db.yaml, acted on by the terminal app only
@@ -99,6 +104,8 @@ func New(cfg config.Config, client Client) (*State, error) {
 		Client:           client,
 		LastRerun:        make(map[string]time.Time),
 		AutoMerge:        db.AutoMerge,
+		MinApprovals:     db.AutoMergeApprovals,
+		ResolvedOnly:     db.AutoMergeResolved,
 		AutoRerun:        db.AutoRerun,
 		LastAutoRerun:    db.AutoRerunLast,
 		AutoRebase:       db.AutoRebase,
@@ -115,10 +122,12 @@ func New(cfg config.Config, client Client) (*State, error) {
 // SaveDB writes the switches to the db file.
 func (s *State) SaveDB() error {
 	return store.Save(s.Config.DataDir, store.DB{
-		AutoMerge:     s.AutoMerge,
-		AutoRerun:     s.AutoRerun,
-		AutoRerunLast: s.LastAutoRerun,
-		AutoRebase:    s.AutoRebase,
+		AutoMerge:          s.AutoMerge,
+		AutoMergeApprovals: s.MinApprovals,
+		AutoMergeResolved:  s.ResolvedOnly,
+		AutoRerun:          s.AutoRerun,
+		AutoRerunLast:      s.LastAutoRerun,
+		AutoRebase:         s.AutoRebase,
 	})
 }
 

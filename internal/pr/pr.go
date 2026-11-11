@@ -114,6 +114,9 @@ type PR struct {
 	// rule. Required checks that never started, such as a fork's workflows
 	// waiting for a maintainer to approve them, show up only here.
 	MergeBlocked bool
+	// Approvals is how many people with write access approve the PR, each by
+	// their latest review.
+	Approvals int
 	// ReviewThreads is the number of inline review comment threads, of which
 	// ResolvedReviewThreads are resolved.
 	ReviewThreads         int
@@ -137,6 +140,12 @@ type PR struct {
 // "acme/widgets#123".
 func (p PR) RepoShort() string {
 	return fmt.Sprintf("%s#%d", p.Repo, p.Number)
+}
+
+// UnresolvedThreads is the number of review comment threads nobody has marked
+// as resolved.
+func (p PR) UnresolvedThreads() int {
+	return p.ReviewThreads - p.ResolvedReviewThreads
 }
 
 // ComputeOverallStatus derives the single actionable status from the

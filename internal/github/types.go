@@ -46,7 +46,7 @@ type prNode struct {
 	HeadRef          refNode    `json:"headRef"`
 	Commits          commitConn `json:"commits"`
 	AllCommits       commitConn `json:"allCommits"`
-	Reviews          reviewConn `json:"reviews"`
+	LatestReviews    reviewConn `json:"latestOpinionatedReviews"`
 	ReviewThreads    threadConn `json:"reviewThreads"`
 	HeadRepository   *repoNode  `json:"headRepository"`
 }
@@ -116,8 +116,7 @@ type reviewConn struct {
 }
 
 type reviewNode struct {
-	State  string     `json:"state"`
-	Author authorNode `json:"author"`
+	State string `json:"state"`
 }
 
 type threadConn struct {
@@ -230,11 +229,8 @@ const prQuery = `query($query: String!, $after: String) {
             }
           }
         }
-        reviews(last: 20, states: [APPROVED, CHANGES_REQUESTED, DISMISSED]) {
-          nodes {
-            state
-            author { login }
-          }
+        latestOpinionatedReviews(first: 10, writersOnly: true) {
+          nodes { state }
         }
         reviewThreads(first: 100) {
           totalCount

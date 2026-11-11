@@ -64,6 +64,24 @@ func (s *State) cleanupAuto() error {
 		}
 	}
 
+	// The conditions are set before automerge is turned on, so they can be
+	// there without it.
+	for key := range s.MinApprovals {
+		if !openPRs[key] && s.isConfirmedGone(key) {
+			delete(s.MinApprovals, key)
+
+			changed = true
+		}
+	}
+
+	for key := range s.ResolvedOnly {
+		if !openPRs[key] && s.isConfirmedGone(key) {
+			delete(s.ResolvedOnly, key)
+
+			changed = true
+		}
+	}
+
 	for key := range s.AutoRebase {
 		if !openPRs[key] && s.isConfirmedGone(key) {
 			delete(s.AutoRebase, key)

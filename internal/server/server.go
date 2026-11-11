@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -176,6 +177,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handlePage)
 	mux.HandleFunc("GET /prs", s.handleList)
 	mux.HandleFunc("POST /toggle", s.handleToggle)
+	mux.HandleFunc("POST /condition", s.handleCondition)
 	mux.HandleFunc("POST /merge", s.handleMerge)
 	mux.HandleFunc("POST /rerun", s.handleRerun)
 	mux.HandleFunc("POST /refresh", s.handleRefresh)
@@ -267,6 +269,60 @@ func (s *Server) handleToggle(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "main", flash{Text: string(kind) + " " + state + " for " + p.RepoShort()})
 }
 
+// handleCondition sets one automerge condition of a PR to the value the page
+// names: "approvals" to 1 (the repository's own rule), 2 or 3, "comments" to
+// "any" or "resolved".
+func (s *Server) handleCondition(w http.ResponseWriter, r *http.Request) {
+	value := r.FormValue("value")
+
+	s.mu.Lock()
+
+	p, err := s.find(r)
+
+	var work engine.Work
+
+	if err == nil {
+		switch r.FormValue("kind") {
+		case "approvals":
+			approvals, convErr := strconv.Atoi(value)
+			if convErr != nil {
+				err = errUnknownCondition
+
+				break
+			}
+
+			work, err = s.state.SetMinApprovals(p, approvals)
+		case "comments":
+			switch {
+			case value != "any" && value != "resolved":
+				err = errUnknownCondition
+			case (value == "resolved") != s.state.ResolvedOnly[p.RepoShort()]:
+				work, err = s.state.ToggleResolvedOnly(p)
+			}
+		default:
+			err = errUnknownCondition
+		}
+	}
+
+	s.mu.Unlock()
+
+	if err != nil {
+		s.render(w, "main", flash{Text: err.Error(), Err: true})
+
+		return
+	}
+
+	if work != nil {
+		s.works.Go(func() {
+			if s.finish(work()) {
+				s.refreshSoon()
+			}
+		})
+	}
+
+	s.render(w, "main", flash{})
+}
+
 func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 
@@ -336,6 +392,8 @@ func (s *Server) handleRerun(w http.ResponseWriter, r *http.Request) {
 }
 
 var (
+	errUnknownCondition = errors.New("unknown automerge condition")
+
 	errGone    = errors.New("that pull request is no longer in the list")
 	errChanged = errors.New("that pull request got a new commit since this page loaded, look again")
 )

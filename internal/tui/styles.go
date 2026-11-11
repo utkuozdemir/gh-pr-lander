@@ -192,15 +192,27 @@ func threadsIndicator(p pr.PR) string {
 	return indicatorPass.Render("✓ " + counts)
 }
 
-func reviewIndicator(status pr.ReviewStatus) string {
-	switch status {
+// reviewIndicator shows the review state, with the number of approvals behind
+// it when there are any.
+func reviewIndicator(p pr.PR) string {
+	approvals := ""
+	if p.Approvals > 0 {
+		approvals = fmt.Sprintf(" (%d)", p.Approvals)
+	}
+
+	switch p.ReviewStatus {
 	case pr.ReviewApproved:
-		return indicatorPass.Render("✓ approved")
+		return indicatorPass.Render("✓ approved" + approvals)
 	case pr.ReviewChangesRequested:
-		return indicatorFail.Render("✗ changes requested")
+		return indicatorFail.Render("✗ changes requested" + approvals)
 	case pr.ReviewPending:
-		return indicatorWarn.Render("◯ pending")
+		return indicatorWarn.Render("◯ pending" + approvals)
 	case pr.ReviewNone:
+		// The repository asks for no review, but people approved anyway.
+		if p.Approvals > 0 {
+			return indicatorPass.Render("✓ approved" + approvals)
+		}
+
 		return indicatorNone.Render("— none")
 	default:
 		return ""

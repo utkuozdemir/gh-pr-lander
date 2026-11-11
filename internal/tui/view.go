@@ -130,7 +130,7 @@ func (m model) renderActivePR(p pr.PR, selected bool) string {
 
 	base := "Base " + baseIndicator(p)
 	ci := "CI " + ciIndicator(p)
-	review := "Review " + reviewIndicator(p.ReviewStatus)
+	review := "Review " + reviewIndicator(p)
 	auto := m.autoIndicators(p)
 
 	comments := ""
@@ -217,6 +217,35 @@ func (m model) badgeFor(key string, status pr.OverallStatus) string {
 	return statusBadge(status)
 }
 
+// automergeText says what automerge on the PR is set to do: that it is off,
+// what it still waits for while it is on, and the conditions it was given.
+func (m model) automergeText(p pr.PR) string {
+	key := p.RepoShort()
+	name := "automerge"
+
+	if !m.AutoMerge[key] {
+		name = "automerge off"
+	} else if waits := m.AutomergeWaitsFor(p); len(waits) > 0 {
+		return "automerge waits: " + strings.Join(waits, ", ")
+	}
+
+	var conditions []string
+
+	if approvals := m.MinApprovals[key]; approvals > 0 {
+		conditions = append(conditions, fmt.Sprintf("%d approvals", approvals))
+	}
+
+	if m.ResolvedOnly[key] {
+		conditions = append(conditions, "comments resolved")
+	}
+
+	if len(conditions) == 0 {
+		return name
+	}
+
+	return name + " (" + strings.Join(conditions, ", ") + ")"
+}
+
 func (m model) autoIndicators(p pr.PR) string {
 	key := p.RepoShort()
 
@@ -225,7 +254,10 @@ func (m model) autoIndicators(p pr.PR) string {
 	if m.IsMergeFailed(key) {
 		parts = append(parts, badgeMergeFailed.Render("⚡ merge gave up"))
 	} else if m.AutoMerge[key] {
-		parts = append(parts, indicatorAuto.Render("⚡ automerge"))
+		parts = append(parts, indicatorAuto.Render("⚡ "+m.automergeText(p)))
+	} else if text := m.automergeText(p); text != "automerge off" {
+		// Conditions set ahead of turning automerge on.
+		parts = append(parts, indicatorNone.Render(text))
 	}
 
 	if m.IsRerunFailed(key) {
@@ -316,6 +348,8 @@ func (m model) renderFooter() string {
 		{"r", "rebase"},
 		{"t", "re-run"},
 		{"a", "automerge"},
+		{"1/2/3", "approvals"},
+		{"c", "comments"},
 		{"A", "autorerun"},
 		{"b", "autorebase"},
 		{"J/K", "queue order"},

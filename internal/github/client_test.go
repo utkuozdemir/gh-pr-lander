@@ -443,7 +443,7 @@ func graphQLPRNodeFull(repo string, number int, sha string, archived bool, autho
 		"headRepository":{"nameWithOwner":"me/` + parts[1] + `","name":"` + parts[1] + `","owner":{"login":"me"}},
 		"headRef":{"name":"branch","target":{"oid":"` + sha + `"}},
 		"commits":{"nodes":[{"commit":{"oid":"` + sha + `","statusCheckRollup":null}}]},
-		"reviews":{"nodes":[]},
+		"latestOpinionatedReviews":{"nodes":[]},
 		"allCommits":` + allCommits + `
 	}`
 }
@@ -570,5 +570,15 @@ func TestComputeCIStatusDoesNotWaitForOptionalChecks(t *testing.T) {
 
 	if status, _ := computeCIStatus(node); status != pr.CIFailed {
 		t.Fatalf("expected CIFailed for a failed check, got %v", status)
+	}
+}
+
+func TestPRFromNodeCountsApprovals(t *testing.T) {
+	p := prFromNode(prNode{LatestReviews: reviewConn{Nodes: []reviewNode{
+		{State: "APPROVED"}, {State: "CHANGES_REQUESTED"}, {State: "APPROVED"},
+	}}})
+
+	if p.Approvals != 2 {
+		t.Fatalf("expected 2 approvals, got %d", p.Approvals)
 	}
 }
