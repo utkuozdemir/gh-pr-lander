@@ -520,6 +520,13 @@ func (c *Client) DeleteBranch(ctx context.Context, repoFullName string, branch s
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	// A branch that is already gone is what was asked for. GitHub answers 422
+	// "Reference does not exist" for it, for example when another instance of
+	// the tool deleted it first.
+	if resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+
 	if resp.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(resp.Body)
 

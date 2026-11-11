@@ -78,12 +78,15 @@ type State struct {
 // CheckBaseline remembers, per PR, the head SHA we last saw, when we first saw
 // it, the high-water check count observed on it, and the high-water count on the
 // SHA before it. A new commit whose current check count is below the previous
-// commit's count is still settling.
+// commit's count is still settling. So is a commit whose count fell below its
+// own high-water mark, which is what a re-run started somewhere else looks
+// like: DroppedAt is when that was first seen.
 type CheckBaseline struct {
 	SHA          string
 	FirstSeen    time.Time
 	MaxTotal     int
 	PrevMaxTotal int
+	DroppedAt    time.Time
 }
 
 // New builds the state from the db file in the config's data directory. On a

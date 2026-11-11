@@ -205,6 +205,10 @@ func (s *State) applyRerunSettling(prs []pr.PR) []pr.PR {
 // commit's checks have not all registered yet, so a transient passed/none
 // reading is treated as still running. The guard relaxes once the checks
 // re-register (the count catches up) or a short grace elapses.
+//
+// The same signal on one commit covers a re-run started outside this process:
+// the reset checks leave the rollup for a moment, the count falls below what
+// the commit already had, and what is left can be all green.
 
 func (s *State) applyChecksSettling(prs []pr.PR) []pr.PR {
 	if s.CheckBaseline == nil {
@@ -237,8 +241,16 @@ func (s *State) applyChecksSettling(prs []pr.PR) []pr.PR {
 			bl = CheckBaseline{SHA: p.HeadSHA, FirstSeen: now, MaxTotal: p.Checks.Total, PrevMaxTotal: bl.MaxTotal}
 		default:
 			// Same commit: checks only grow as they register, so keep the
-			// high-water mark.
-			bl.MaxTotal = max(bl.MaxTotal, p.Checks.Total)
+			// high-water mark. A count below it means checks were reset by a
+			// re-run this process did not start (GitHub's page, another
+			// instance of the tool), so the rerun guard above is not armed.
+			switch {
+			case p.Checks.Total >= bl.MaxTotal:
+				bl.MaxTotal = p.Checks.Total
+				bl.DroppedAt = time.Time{}
+			case bl.DroppedAt.IsZero():
+				bl.DroppedAt = now
+			}
 		}
 
 		s.CheckBaseline[key] = bl
@@ -246,9 +258,10 @@ func (s *State) applyChecksSettling(prs []pr.PR) []pr.PR {
 		// Suppress only a freshly-pushed commit that currently looks all-green
 		// while still showing fewer checks than its predecessor had — i.e. the
 		// required checks have not registered yet.
-		if (p.CIStatus == pr.CIPassed || p.CIStatus == pr.CINone) &&
-			bl.PrevMaxTotal > p.Checks.Total &&
-			now.Sub(bl.FirstSeen) < grace {
+		registering := bl.PrevMaxTotal > p.Checks.Total && now.Sub(bl.FirstSeen) < grace
+		reset := !bl.DroppedAt.IsZero() && now.Sub(bl.DroppedAt) < grace
+
+		if (p.CIStatus == pr.CIPassed || p.CIStatus == pr.CINone) && (registering || reset) {
 			p.CIStatus = pr.CIRunning
 			p.OverallStatus = pr.ComputeOverallStatus(*p)
 		}

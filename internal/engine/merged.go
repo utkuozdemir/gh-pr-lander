@@ -123,10 +123,13 @@ func (s *State) checkTransitions() {
 		body := key + " — " + p.Title
 		_, autoRebase := s.AutoRebase[key]
 
-		// A refused automerge is about one commit. A new head gets a new try.
+		// Giving up is about one commit: a refused merge, or re-runs that
+		// kept failing. A new head gets a new try.
 		if prev.HeadSHA != p.HeadSHA {
 			delete(s.MergeFailed, key)
+			delete(s.RerunFailed, key)
 			s.clearAutoCheck(Automerge, key)
+			s.clearAutoCheck(Autorerun, key)
 		}
 
 		if prev.OverallStatus != pr.StatusReady && p.OverallStatus == pr.StatusReady {

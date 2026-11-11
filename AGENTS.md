@@ -244,6 +244,14 @@ could fire a spurious merge attempt).
    immediately. This is the real fix for #7 because it needs no in-tool action to
    arm — it is the count-drop heuristic foreshadowed in the issue #1 notes.
 
+**Re-runs started elsewhere.** The issue #1 guard arms only on a re-run this
+process started. A re-run from GitHub's page, or from a second instance of the
+tool (terminal app and server side by side), resets checks on the same commit
+with nothing armed. `applyChecksSettling` covers it with the same count signal
+on one commit: when the count falls below the commit's own high-water mark
+(`CheckBaseline.DroppedAt`), a `CIPassed`/`CINone` reading is rewritten to
+`CIRunning` until the count is back or the grace is over.
+
 Both guards run each fetch (`applyChecksSettling(applyRerunSettling(...))`) and
 only ever push toward `CIRunning`, so they compose without fighting. Tested in
 `internal/engine/auto_test.go` (settling) and `internal/github/client_test.go`

@@ -213,3 +213,50 @@ func TestApplyChecksSettlingBlocksSpuriousAutomerge(t *testing.T) {
 		t.Fatal("automerge must not fire while the post-push checks are settling")
 	}
 }
+
+// A re-run started outside this process (GitHub's page, another instance of the
+// tool) resets checks on the same commit. For a moment they are gone from the
+// rollup and the rest can be all green.
+func TestApplyChecksSettlingSuppressesResetOnSameCommit(t *testing.T) {
+	m := checksSettlingModel()
+	m.applyChecksSettling([]pr.PR{checkedPR("sha1", 14)})
+
+	got := m.applyChecksSettling([]pr.PR{checkedPR("sha1", 13)})
+	if got[0].CIStatus != pr.CIRunning || m.shouldAutoMerge(got[0]) {
+		t.Fatalf("expected CIRunning and no automerge while checks are reset, got %v", got[0].CIStatus)
+	}
+
+	got = m.applyChecksSettling([]pr.PR{checkedPR("sha1", 14)})
+	if got[0].CIStatus != pr.CIPassed {
+		t.Fatalf("expected CIPassed once the checks are back, got %v", got[0].CIStatus)
+	}
+
+	// A count that stays lower is trusted after the grace.
+	m.applyChecksSettling([]pr.PR{checkedPR("sha1", 13)})
+
+	bl := m.CheckBaseline["org/repo#1"]
+	bl.DroppedAt = time.Now().Add(-m.Config.RerunSettleGrace() - time.Second)
+	m.CheckBaseline["org/repo#1"] = bl
+
+	got = m.applyChecksSettling([]pr.PR{checkedPR("sha1", 13)})
+	if got[0].CIStatus != pr.CIPassed {
+		t.Fatalf("after the grace window the reading must be trusted, got %v", got[0].CIStatus)
+	}
+}
+
+func TestNewHeadCommitResetsAutorerunGiveUp(t *testing.T) {
+	p := readyPR("sha1")
+	key := p.RepoShort()
+
+	m := testState(t, p)
+	m.AutoRerun[key] = true
+	m.RerunFailed[key] = true
+
+	if _, err := m.Apply([]pr.PR{readyPR("sha2")}); err != nil {
+		t.Fatal(err)
+	}
+
+	if m.IsRerunFailed(key) {
+		t.Fatal("expected autorerun to try again on a new head commit")
+	}
+}
