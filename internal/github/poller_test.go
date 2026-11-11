@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 type fakeFetcher struct {

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/notify"
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/notify"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // detectMerged finds PRs that disappeared since the last fetch, records them as

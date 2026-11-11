@@ -14,7 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // ConfigPath returns the path to the optional user-provided gitconfig that is
@@ -22,11 +22,11 @@ import (
 func ConfigPath() string {
 	home, _ := os.UserHomeDir()
 
-	return filepath.Join(home, ".config", "sidero-rebaser", "gitconfig")
+	return filepath.Join(home, ".config", "gh-pr-lander", "gitconfig")
 }
 
 // RepoDir returns the path where the tool keeps its own clone of a fork, e.g.
-// ~/.sidero-rebaser/repos/utkuozdemir/cosi-runtime. The tool never touches the
+// ~/.gh-pr-lander/repos/utkuozdemir/cosi-runtime. The tool never touches the
 // user's own working directories.
 func RepoDir(dataDir, forkOwner, forkName string) string {
 	return filepath.Join(dataDir, "repos", forkOwner, forkName)
@@ -73,7 +73,7 @@ func BuildRebaseScript(dataDir string, p pr.PR, countdown int) (string, error) {
 		`    echo ""`,
 		`    echo "!!! Failed (exit code $1)"`,
 		`    echo ""`,
-		`    echo "Press Enter to return to sidero-rebaser..."`,
+		`    echo "Press Enter to return to gh-pr-lander..."`,
 		"    read -r",
 		`    exit "$1"`,
 		"}",
@@ -140,7 +140,7 @@ func BuildRebaseScript(dataDir string, p pr.PR, countdown int) (string, error) {
 		"    fi",
 		"    git rebase --abort 2>/dev/null || true",
 		`    echo ""`,
-		`    echo "Press Enter to return to sidero-rebaser..."`,
+		`    echo "Press Enter to return to gh-pr-lander..."`,
 		"    read -r",
 		"    exit 1",
 		"fi",

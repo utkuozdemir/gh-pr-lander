@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 func TestBuildRebaseScriptIsWellFormed(t *testing.T) {

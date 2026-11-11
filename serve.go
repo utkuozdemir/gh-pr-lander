@@ -14,9 +14,9 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/github"
-	"github.com/utkuozdemir/sidero-rebaser/internal/notify"
-	"github.com/utkuozdemir/sidero-rebaser/internal/server"
+	"github.com/utkuozdemir/gh-pr-lander/internal/github"
+	"github.com/utkuozdemir/gh-pr-lander/internal/notify"
+	"github.com/utkuozdemir/gh-pr-lander/internal/server"
 )
 
 // runServer runs the tool with no terminal: the poller, the engine's

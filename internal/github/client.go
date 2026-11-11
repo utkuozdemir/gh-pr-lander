@@ -18,7 +18,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // annotateConcurrency bounds how many Actions-API calls we make in parallel

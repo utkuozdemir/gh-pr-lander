@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/github"
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/github"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // A merge GitHub refused is not asked for again on the same commit. A new head

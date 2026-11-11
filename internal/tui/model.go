@@ -16,11 +16,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/config"
-	"github.com/utkuozdemir/sidero-rebaser/internal/engine"
-	"github.com/utkuozdemir/sidero-rebaser/internal/git"
-	"github.com/utkuozdemir/sidero-rebaser/internal/github"
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/config"
+	"github.com/utkuozdemir/gh-pr-lander/internal/engine"
+	"github.com/utkuozdemir/gh-pr-lander/internal/git"
+	"github.com/utkuozdemir/gh-pr-lander/internal/github"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // displayItem is one row in the combined active+merged list.

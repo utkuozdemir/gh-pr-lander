@@ -15,10 +15,10 @@ import (
 	"sort"
 	"time"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/config"
-	"github.com/utkuozdemir/sidero-rebaser/internal/github"
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
-	"github.com/utkuozdemir/sidero-rebaser/internal/store"
+	"github.com/utkuozdemir/gh-pr-lander/internal/config"
+	"github.com/utkuozdemir/gh-pr-lander/internal/github"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/store"
 )
 
 // Client is the slice of the GitHub API the engine and its front ends depend

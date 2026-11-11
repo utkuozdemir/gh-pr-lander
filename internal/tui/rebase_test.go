@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/config"
-	"github.com/utkuozdemir/sidero-rebaser/internal/engine"
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/config"
+	"github.com/utkuozdemir/gh-pr-lander/internal/engine"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // queuePR is an approved, green PR on org/repo main with the given base state.

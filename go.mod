@@ -1,4 +1,4 @@
-module github.com/utkuozdemir/sidero-rebaser
+module github.com/utkuozdemir/gh-pr-lander
 
 go 1.26.2
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // The page is drawn from a copy of the state taken under the lock, so the

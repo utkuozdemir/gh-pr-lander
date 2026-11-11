@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 const (

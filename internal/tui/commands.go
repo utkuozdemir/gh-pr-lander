@@ -6,9 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/engine"
-	"github.com/utkuozdemir/sidero-rebaser/internal/github"
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/engine"
+	"github.com/utkuozdemir/gh-pr-lander/internal/github"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // Messages

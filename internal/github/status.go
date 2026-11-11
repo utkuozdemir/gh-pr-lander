@@ -3,7 +3,7 @@ package github
 import (
 	"strings"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // prFromNode maps a GraphQL PR node into the domain model, deriving all status

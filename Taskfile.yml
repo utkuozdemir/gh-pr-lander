@@ -34,7 +34,7 @@ tasks:
   build:
     desc: build the binary
     cmds:
-      - go build -o sidero-rebaser .
+      - go build -o gh-pr-lander .
 
   release:
     desc: tag the next version and push it, or VERSION when one is given

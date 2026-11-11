@@ -1,10 +1,10 @@
-// Command sidero-rebaser is a tool for a rebase-and-merge PR workflow with
+// Command gh-pr-lander is a tool for a rebase-and-merge PR workflow with
 // signed commits and fast-forward merges. See README.md for the user-facing
 // description and AGENTS.md for the architecture and contributor notes.
 //
 // This file is intentionally thin: it parses flags, wires the components
 // together, and runs the Bubble Tea program alongside a background poller under
-// a structured-concurrency group. `sidero-rebaser serve` runs the server
+// a structured-concurrency group. `gh-pr-lander serve` runs the server
 // instead (serve.go). All behavior lives in internal/.
 package main
 
@@ -24,10 +24,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/config"
-	"github.com/utkuozdemir/sidero-rebaser/internal/github"
-	"github.com/utkuozdemir/sidero-rebaser/internal/notify"
-	"github.com/utkuozdemir/sidero-rebaser/internal/tui"
+	"github.com/utkuozdemir/gh-pr-lander/internal/config"
+	"github.com/utkuozdemir/gh-pr-lander/internal/github"
+	"github.com/utkuozdemir/gh-pr-lander/internal/notify"
+	"github.com/utkuozdemir/gh-pr-lander/internal/tui"
 )
 
 func main() {
@@ -56,7 +56,7 @@ func runTerminal(args []string) error {
 		defer func() { _ = logFile.Close() }()
 	}
 
-	slog.Info("starting sidero-rebaser", "orgs", cfg.Orgs, "poll_interval", cfg.PollInterval, "data_dir", cfg.DataDir)
+	slog.Info("starting gh-pr-lander", "orgs", cfg.Orgs, "poll_interval", cfg.PollInterval, "data_dir", cfg.DataDir)
 
 	notify.SetEnabled(cfg.Notifications)
 
@@ -124,8 +124,8 @@ type serveOptions struct {
 // is set. The two share most of them.
 func parseFlags(args []string, serve bool) (config.Config, serveOptions, error) {
 	home, _ := os.UserHomeDir()
-	defaultDataDir := filepath.Join(home, ".sidero-rebaser")
-	name := "sidero-rebaser"
+	defaultDataDir := filepath.Join(home, ".gh-pr-lander")
+	name := "gh-pr-lander"
 
 	// The server keeps its own switches, so it must not share the db file of
 	// a terminal app on the same machine.
@@ -219,7 +219,7 @@ func setupLogging(dataDir string) (*os.File, error) {
 		return nil, err
 	}
 
-	logPath := filepath.Join(dataDir, "sidero-rebaser.log")
+	logPath := filepath.Join(dataDir, "gh-pr-lander.log")
 
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {

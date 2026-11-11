@@ -13,10 +13,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /sidero-rebaser .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /gh-pr-lander .
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
-COPY --from=build /sidero-rebaser /sidero-rebaser
+COPY --from=build /gh-pr-lander /gh-pr-lander
 
-ENTRYPOINT ["/sidero-rebaser"]
+ENTRYPOINT ["/gh-pr-lander"]

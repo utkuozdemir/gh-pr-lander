@@ -1,4 +1,4 @@
-# sidero-rebaser
+# gh-pr-lander
 
 Watching one person's open pull requests and getting them merged with as little attention as possible, in a workflow where every commit is signed and merges are fast-forward only.
 

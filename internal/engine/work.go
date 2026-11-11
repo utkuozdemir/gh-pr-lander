@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/github"
-	"github.com/utkuozdemir/sidero-rebaser/internal/notify"
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/github"
+	"github.com/utkuozdemir/gh-pr-lander/internal/notify"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // Work is one blocking round of GitHub calls. It touches no State, so it can

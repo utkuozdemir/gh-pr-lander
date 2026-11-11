@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/config"
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/config"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // readyPR is a PR that, on its own, would be considered ready to merge.

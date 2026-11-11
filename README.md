@@ -1,10 +1,10 @@
-# sidero-rebaser
+# gh-pr-lander
 
-Terminal tool for the Siderolabs PR rebase-and-merge workflow.
+Lands your GitHub pull requests in repositories where commits are signed and merges are fast-forward only: a terminal app, and a server with a small page for when you are away from it.
 
 ## The problem
 
-At Siderolabs, every commit is GPG-signed with a YubiKey. We never click GitHub's merge button. All merges are fast-forward only: after rebasing locally, the base branch is moved to the PR's head commit through the GitHub API. The entire commit history stays signed by the team, no GitHub-authored commits.
+It was written for the Siderolabs workflow, where every commit is GPG-signed with a YubiKey. We never click GitHub's merge button. All merges are fast-forward only: after rebasing locally, the base branch is moved to the PR's head commit through the GitHub API. The entire commit history stays signed by the team, no GitHub-authored commits.
 
 This means a lot of rebasing. When someone merges before you, your PR goes stale. You stop what you're doing, switch branches, rebase, force push, wait for CI. Then you watch for CI to pass so you can merge before someone else merges and you go stale again. Flaky tests? Re-run, wait, hope nobody merges in the meantime. Multiply by the number of repos and open PRs.
 
@@ -48,7 +48,7 @@ Desktop notifications use a different macOS sound per event, so you can tell the
 
 When automation is on for a PR, the event it is about to handle stays quiet and only its outcome notifies: no "ready to merge" with automerge on, no "checks failed" while autorerun can re-run the failure (a GitHub Actions job), no "needs rebase" with autorebase on.
 
-The tool keeps its own repo clones under `~/.sidero-rebaser/repos/` and never touches your working directories.
+The tool keeps its own repo clones under `~/.gh-pr-lander/repos/` and never touches your working directories.
 
 ## Setup
 
@@ -57,8 +57,8 @@ Needs a GitHub token. Any of these:
 - `gh` CLI logged in (`gh auth login`)
 
 ```
-go install github.com/utkuozdemir/sidero-rebaser@latest
-sidero-rebaser
+go install github.com/utkuozdemir/gh-pr-lander@latest
+gh-pr-lander
 ```
 
 Or `go run .` from source. All settings have defaults, `--help` for the full list:
@@ -66,7 +66,7 @@ Or `go run .` from source. All settings have defaults, `--help` for the full lis
 ```
 --orgs                      comma-separated GitHub orgs (default: siderolabs,cosi-project)
 --interval                  poll interval when idle (default: 2m, minimum: 10s); polls faster automatically while CI is running
---data-dir                  data directory (default: ~/.sidero-rebaser)
+--data-dir                  data directory (default: ~/.gh-pr-lander)
 --auto-max-retries          max autorerun attempts before giving up (default: 3)
 --auto-cooldown             cooldown between auto-merge/rerun attempts (default: 5m)
 --notifications             desktop notifications (default: true)
@@ -93,25 +93,25 @@ Or `go run .` from source. All settings have defaults, `--help` for the full lis
 
 ## Server
 
-The terminal app only works while it runs, and merging needs no YubiKey. `sidero-rebaser serve` is the same tool with no terminal: an always-on process that polls your PRs and serves a small page, so you can ask for a merge from a phone or a browser while the laptop is closed. Nothing is written on the PR itself.
+The terminal app only works while it runs, and merging needs no YubiKey. `gh-pr-lander serve` is the same tool with no terminal: an always-on process that polls your PRs and serves a small page, so you can ask for a merge from a phone or a browser while the laptop is closed. Nothing is written on the PR itself.
 
 ```
-sidero-rebaser serve --listen :8080 --token-file /path/to/token --data-dir /data
+gh-pr-lander serve --listen :8080 --token-file /path/to/token --data-dir /data
 ```
 
 The page lists your PRs with their status. Per PR you can switch automerge and autorerun, merge now, and re-run failed jobs. The server does those, and deletes your fork branch after a merge. It never rebases, since that needs the YubiKey. A PR that is behind waits for the terminal app.
 
 - **Token:** `--token-file` names a file holding a GitHub token that can write to the repositories (a classic token with the `repo` scope works). Without the flag it falls back to `GITHUB_TOKEN`, `GH_TOKEN` or `gh`, which is handy for trying it locally.
-- **State:** the switches are kept in `db.yaml` under `--data-dir` (default `~/.sidero-rebaser/server`). Give it a volume that survives restarts.
+- **State:** the switches are kept in `db.yaml` under `--data-dir` (default `~/.gh-pr-lander/server`). Give it a volume that survives restarts.
 - **No login yet:** anything that can reach the page can use it, so serve it only on a network you trust, such as a home LAN or a private VPN. Requests coming from other websites are refused. Branch protection still decides whether a merge is accepted.
 - **Only your own PRs:** a PR you took over from someone else is left to the terminal app, since its author can still push to it.
 - **Side by side with the terminal app:** both work on their own and keep their own switches. If both have automerge on for one PR, the second merge attempt changes nothing.
 
-A container image is published as `ghcr.io/utkuozdemir/sidero-rebaser` for each version tag. Its entrypoint is the binary, so pass `serve` and the flags as arguments.
+A container image is published as `ghcr.io/utkuozdemir/gh-pr-lander` for each version tag. Its entrypoint is the binary, so pass `serve` and the flags as arguments.
 
 ## Git identity and signing
 
-Clones under `~/.sidero-rebaser/repos/` inherit your global gitconfig. If you need different settings (signing key, email, etc.), put them in `~/.config/sidero-rebaser/gitconfig`:
+Clones under `~/.gh-pr-lander/repos/` inherit your global gitconfig. If you need different settings (signing key, email, etc.), put them in `~/.config/gh-pr-lander/gitconfig`:
 
 ```
 [user]
@@ -128,4 +128,4 @@ Gets included in every clone automatically.
 
 ## Logs
 
-`~/.sidero-rebaser/sidero-rebaser.log`
+`~/.gh-pr-lander/gh-pr-lander.log`

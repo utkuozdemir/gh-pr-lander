@@ -12,9 +12,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/git"
-	"github.com/utkuozdemir/sidero-rebaser/internal/notify"
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/git"
+	"github.com/utkuozdemir/gh-pr-lander/internal/notify"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // Auto-rebase queue.

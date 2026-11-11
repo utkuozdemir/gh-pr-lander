@@ -9,7 +9,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 func (m model) View() string {
@@ -56,7 +56,7 @@ func (m model) View() string {
 }
 
 func (m model) renderHeader() string {
-	title := headerStyle.Render("sidero-rebaser")
+	title := headerStyle.Render("gh-pr-lander")
 
 	var info string
 	if m.loading {

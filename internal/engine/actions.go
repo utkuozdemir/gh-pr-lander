@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
+	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
 // Kind names one of the two automation switches a PR has. Its value is the

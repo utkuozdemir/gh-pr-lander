@@ -1,4 +1,4 @@
-# sidero-rebaser — agent guide
+# gh-pr-lander — agent guide
 
 You (the agent) work on this repository. `CLAUDE.md` and `GEMINI.md` just
 import this file, so it is the one place to edit. **Part of your job, every
@@ -11,8 +11,12 @@ honest — if something here turns out to be wrong, fix it.
 
 ## What this tool is
 
-`sidero-rebaser` is a terminal (Bubble Tea) tool for the Siderolabs PR
-workflow. At Siderolabs every commit is GPG-signed with a YubiKey, the GitHub
+`gh-pr-lander` lands its owner's GitHub pull requests in a workflow with
+signed commits and fast-forward merges. It has a terminal (Bubble Tea) front
+end and a server with a page. It was written for the Siderolabs PR workflow
+and was called `sidero-rebaser` until Nov 2026. Nothing in the code is specific
+to Siderolabs any more, except the default of `--orgs`. At Siderolabs every
+commit is GPG-signed with a YubiKey, the GitHub
 merge button is never used, and merges are fast-forwards of the base branch to
 the PR's head commit after the author has rebased locally onto the latest base.
 That means constant rebasing, watching CI, and racing to merge before someone
@@ -73,7 +77,7 @@ main  ──>  tui     ──>  engine ──> github ──> pr
   styles, and what needs the YubiKey (rebase and the autorebase queue in
   `rebase.go`). The model embeds `*engine.State`, wraps each `engine.Work` in
   a `tea.Cmd` (`workCmd`), and turns results into status lines.
-- **`internal/server`** — the front end with no terminal (`sidero-rebaser
+- **`internal/server`** — the front end with no terminal (`gh-pr-lander
   serve`): a fetch loop that feeds the engine and starts what automation asks
   for, plus the page (`page.html`, Go templates and an embedded htmx file).
   See "The server and the page" below.
@@ -173,7 +177,7 @@ the page can show the real outcome.
 
 - **The terminal app and the server do not know about each other.** Each has
   its own `db.yaml` (the server's default data dir is
-  `~/.sidero-rebaser/server` so the two never share a file). Both acting on
+  `~/.gh-pr-lander/server` so the two never share a file). Both acting on
   one PR is safe: a second non-forced ref update changes nothing, and a
   re-run started by the other one is covered by the "re-runs started
   elsewhere" guard.
@@ -204,7 +208,7 @@ and the list update together. htmx is embedded (`static/htmx.min.js`, version
 `snapshot()`, a copy taken under the lock, so templates never touch the engine.
 
 **Shipping.** `Dockerfile` builds a distroless nonroot image and
-`.github/workflows/image.yml` pushes it to `ghcr.io/utkuozdemir/sidero-rebaser`
+`.github/workflows/image.yml` pushes it to `ghcr.io/utkuozdemir/gh-pr-lander`
 for both amd64 and arm64 when a `v*` tag is pushed. The repo is private, so the
 package starts private too and has to be made public once in the package
 settings. Deployment manifests live in the owner's homelab repo, not here.
@@ -434,7 +438,7 @@ task fmt        # go mod tidy, go fix, golangci-lint --fix, golangci-lint fmt
 task lint       # go mod tidy --diff + golangci-lint run
 task test       # go test ./...
 task test-race  # go test -race ./...   (the poller is concurrent — keep this clean)
-task build      # go build -o sidero-rebaser .
+task build      # go build -o gh-pr-lander .
 task release    # tag the next version (svu) and push it, VERSION=vX.Y.Z to name one
 ```
 

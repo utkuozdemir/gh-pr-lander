@@ -1,3 +1,3 @@
-# sidero-rebaser — agent guide
+# gh-pr-lander — agent guide
 
 @AGENTS.md
