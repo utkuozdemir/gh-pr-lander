@@ -459,6 +459,9 @@ Or the raw commands: `go build ./...`, `go test ./...`, `golangci-lint run ./...
   `exhaustruct_v5`, which the `exhaustruct` disable does not cover, so a local
   run shows ~50 struct-literal hits that CI (pinned to v2.12.2) never sees. Use
   `golangci-lint run --new-from-rev=origin/main` to see only your own hits.
+  That hides findings on lines the change did not touch, such as `unparam` on
+  a function signature whose body changed, so before pushing also run
+  `golangci-lint run ./... | grep -v exhaustruct_v5`.
   Don't add `exhaustruct_v5` to the disable list while CI is on 2.12.x, an
   unknown linter name is a config error there.
 - **Formatters**: gci, gofmt, gofumpt, goimports, golines (max-len 120), run via
