@@ -185,3 +185,21 @@ func TestTakenOverPRsAreLeftToTheTerminalApp(t *testing.T) {
 		t.Fatalf("expected only the owner's PR on the page, got %+v", data.PRs)
 	}
 }
+
+// The list refreshes itself in place, and htmx hands that target down to
+// everything inside it. A form in the list that did not name its own target
+// would put the whole answer, header included, where the list was.
+func TestFormsInTheListNameTheirOwnTarget(t *testing.T) {
+	s, _ := testServer(t, readyPR(1, "aaa"))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/prs", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	forms := strings.Count(body, "<form ")
+
+	if forms == 0 || forms != strings.Count(body, `hx-target="#main" hx-swap="innerHTML"`) {
+		t.Fatalf("expected each of the %d forms in the list to target #main, got %q", forms, body)
+	}
+}

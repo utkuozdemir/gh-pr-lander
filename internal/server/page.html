@@ -73,6 +73,7 @@ button:disabled { opacity: .4; cursor: default; }
 
 {{define "list"}}
 <div id="list" hx-get="/prs" hx-trigger="every 10s" hx-target="this" hx-swap="outerHTML">
+  {{/* The forms below name their own target. Without it they would inherit this element's and put the whole answer, header included, in place of the list. */}}
   {{if .FetchErr}}<div class="flash err">Could not reach GitHub: {{.FetchErr}}</div>{{end}}
   <div class="meta">Updated {{.Fetched}}</div>
 
@@ -91,24 +92,24 @@ button:disabled { opacity: .4; cursor: default; }
       {{if .RerunGaveUp}}<span class="fail">re-run gave up on this commit</span>{{end}}
     </div>
     <div class="actions">
-      <form hx-post="/toggle">
+      <form hx-post="/toggle" hx-target="#main" hx-swap="innerHTML">
         <input type="hidden" name="key" value="{{.Key}}">
         <input type="hidden" name="sha" value="{{.SHA}}">
         <input type="hidden" name="kind" value="automerge">
         <button aria-pressed="{{.AutoMerge}}">Automerge {{if .AutoMerge}}on{{else}}off{{end}}</button>
       </form>
-      <form hx-post="/toggle">
+      <form hx-post="/toggle" hx-target="#main" hx-swap="innerHTML">
         <input type="hidden" name="key" value="{{.Key}}">
         <input type="hidden" name="sha" value="{{.SHA}}">
         <input type="hidden" name="kind" value="autorerun">
         <button aria-pressed="{{.AutoRerun}}">Autorerun {{if .AutoRerun}}on{{else}}off{{end}}</button>
       </form>
-      <form hx-post="/merge" hx-confirm="Merge {{.Key}} now?">
+      <form hx-post="/merge" hx-target="#main" hx-swap="innerHTML" hx-confirm="Merge {{.Key}} now?">
         <input type="hidden" name="key" value="{{.Key}}">
         <input type="hidden" name="sha" value="{{.SHA}}">
         <button class="go" {{if not .CanMerge}}disabled{{end}}>Merge now</button>
       </form>
-      <form hx-post="/rerun">
+      <form hx-post="/rerun" hx-target="#main" hx-swap="innerHTML">
         <input type="hidden" name="key" value="{{.Key}}">
         <input type="hidden" name="sha" value="{{.SHA}}">
         <button {{if not .CanRerun}}disabled{{end}}>Re-run failed</button>
