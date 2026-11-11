@@ -121,6 +121,12 @@ func (m model) checkTransitions() {
 		body := key + " — " + p.Title
 		_, autoRebase := m.autoRebase[key]
 
+		// A refused automerge is about one commit. A new head gets a new try.
+		if prev.HeadSHA != p.HeadSHA {
+			delete(m.mergeFailed, key)
+			m.clearAutoCheck("automerge", key)
+		}
+
 		if prev.OverallStatus != pr.StatusReady && p.OverallStatus == pr.StatusReady {
 			slog.Info("PR became ready to merge", "pr", key)
 

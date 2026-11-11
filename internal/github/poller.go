@@ -34,7 +34,7 @@ type FetchResult struct {
 // Poller continuously fetches PRs in the background and streams results over a
 // channel. It replaces a UI-driven "tick then fetch" loop: the UI just reads
 // results as they arrive, and can ask for an immediate refresh after an action
-// (post /m, rerun, rebase) so effects show up without waiting for the next
+// (merge, rerun, rebase) so effects show up without waiting for the next
 // interval. This is what makes the tool feel responsive (issue #2).
 type Poller struct {
 	fetcher  PRFetcher

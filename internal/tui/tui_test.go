@@ -15,14 +15,11 @@ import (
 // fakeClient is a no-op Client used to exercise the model without any network.
 type fakeClient struct {
 	username string
+	mergeErr error
 }
 
-func (f fakeClient) PostComment(context.Context, string, int, string) (bool, error) {
-	return false, nil
-}
-func (f fakeClient) PostCommentRaw(context.Context, string, int, string) error { return nil }
-func (f fakeClient) CountMergeComments(context.Context, string, int, string) (int, time.Time, error) {
-	return 0, time.Time{}, nil
+func (f fakeClient) FastForwardMerge(context.Context, string, string, string) error {
+	return f.mergeErr
 }
 
 func (f fakeClient) FailedWorkflowRunsSummary(context.Context, string, string) (github.WorkflowSummary, error) {
@@ -355,7 +352,6 @@ func testAutoToggleModel(t *testing.T, p pr.PR) model {
 			PollInterval:   2 * time.Minute,
 			AutoCooldown:   time.Hour,
 			AutoMaxRetries: 3,
-			MergeComment:   "/m",
 		},
 		prs:              []pr.PR{p},
 		autoMerge:        map[string]bool{},

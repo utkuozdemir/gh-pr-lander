@@ -9,7 +9,7 @@ import (
 
 func TestEventSoundsAreDistinctAndExist(t *testing.T) {
 	events := []Event{
-		ReadyToMerge, MergePosted, Merged, Closed, ChecksFailed,
+		ReadyToMerge, Merged, Closed, ChecksFailed,
 		NeedsRebase, AutorebaseNeedsYou, AutomergeGaveUp, AutorerunGaveUp,
 	}
 

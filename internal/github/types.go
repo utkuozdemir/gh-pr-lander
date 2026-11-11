@@ -161,14 +161,6 @@ type workflowRun struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
-type issueComment struct {
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
-	User      struct {
-		Login string `json:"login"`
-	} `json:"user"`
-}
-
 const prQuery = `query($query: String!, $after: String) {
   search(query: $query, type: ISSUE, first: 25, after: $after) {
     pageInfo {

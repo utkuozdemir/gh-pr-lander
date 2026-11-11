@@ -24,7 +24,6 @@ type Event struct {
 
 var (
 	ReadyToMerge       = Event{"Ready to merge", "Glass"}
-	MergePosted        = Event{"Merge posted", "Pop"}
 	Merged             = Event{"Merged", "Hero"}
 	Closed             = Event{"Closed without merge", "Bottle"}
 	ChecksFailed       = Event{"Checks failed", "Basso"}

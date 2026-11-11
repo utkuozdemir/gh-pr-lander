@@ -47,7 +47,7 @@ func prFromNode(node prNode) pr.PR {
 	}
 
 	p.BaseStatus = computeBaseStatus(node)
-	if p.BaseStatus == pr.BaseSynced && behindBase(node) {
+	if p.BaseStatus == pr.BaseSynced && behindBase(node, p.HeadSHA) {
 		p.BaseStatus = pr.BaseBehind
 		// UNKNOWN means GitHub has not computed the merge state yet, so it says
 		// nothing about whether the branch enforces being up to date.
@@ -85,12 +85,18 @@ func touchedBy(node prNode, username string) bool {
 // is based on. GitHub only reports BEHIND when the base branch requires
 // branches to be up to date and has required checks, so without this a PR in
 // a repo that does not enforce it shows as synced however far behind it is.
-func behindBase(node prNode) bool {
+//
+// A base branch that sits on the PR's own head commit has not moved past the
+// PR: the PR was just fast-forward merged, and GitHub lists it as open for a
+// moment longer.
+func behindBase(node prNode, headSHA string) bool {
 	if node.BaseRefOID == "" || node.BaseRef == nil || node.BaseRef.Target.OID == "" {
 		return false
 	}
 
-	return node.BaseRefOID != node.BaseRef.Target.OID
+	tip := node.BaseRef.Target.OID
+
+	return node.BaseRefOID != tip && headSHA != tip
 }
 
 func computeBaseStatus(node prNode) pr.BaseStatus {

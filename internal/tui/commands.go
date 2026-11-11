@@ -8,7 +8,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/utkuozdemir/sidero-rebaser/internal/config"
 	"github.com/utkuozdemir/sidero-rebaser/internal/github"
 	"github.com/utkuozdemir/sidero-rebaser/internal/pr"
 )
@@ -21,10 +20,12 @@ type resultsMsg struct {
 	err error
 }
 
-type commentPostedMsg struct {
-	pr        pr.PR
-	err       error
-	duplicate bool
+// mergeResultMsg is the outcome of a fast-forward merge, started by the user
+// or by automerge (auto).
+type mergeResultMsg struct {
+	pr   pr.PR
+	auto bool
+	err  error
 }
 
 type checksRerunMsg struct {
@@ -51,14 +52,6 @@ type mergedCheckMsg struct {
 	open    bool // true if the PR was omitted from search but is still open
 	merged  bool // true if API confirmed merged, false if closed without merge
 	deleted bool // true if branch was actually deleted
-	err     error
-}
-
-type autoMergeResultMsg struct {
-	prKey   string
-	posted  bool
-	failed  bool // max retries exceeded
-	tooSoon bool
 	err     error
 }
 
@@ -94,14 +87,14 @@ func delayedRefreshCmd(delay time.Duration) tea.Cmd {
 	})
 }
 
-func postCommentCmd(client Client, p pr.PR, comment string) tea.Cmd {
+func mergeCmd(client Client, p pr.PR, auto bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		dup, err := client.PostComment(ctx, p.Repo, p.Number, comment)
+		err := client.FastForwardMerge(ctx, p.Repo, p.BaseBranch, p.HeadSHA)
 
-		return commentPostedMsg{pr: p, err: err, duplicate: dup}
+		return mergeResultMsg{pr: p, auto: auto, err: err}
 	}
 }
 
@@ -160,36 +153,6 @@ func checkMergedPRCmd(client Client, p pr.PR, deleteBranch bool) tea.Cmd {
 		}
 
 		return mergedCheckMsg{prKey: key, branch: p.HeadBranch, merged: true, deleted: true}
-	}
-}
-
-// autoMergeCmd checks the /m comment count from the GitHub API, then posts if
-// appropriate.
-func autoMergeCmd(client Client, p pr.PR, cfg config.Config) tea.Cmd {
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		key := p.RepoShort()
-
-		count, lastTime, err := client.CountMergeComments(ctx, p.Repo, p.Number, cfg.MergeComment)
-		if err != nil {
-			return autoMergeResultMsg{prKey: key, err: err}
-		}
-
-		if count >= cfg.AutoMaxRetries {
-			return autoMergeResultMsg{prKey: key, failed: true}
-		}
-
-		if !lastTime.IsZero() && time.Since(lastTime) < cfg.AutoCooldown {
-			return autoMergeResultMsg{prKey: key, tooSoon: true}
-		}
-
-		if err := client.PostCommentRaw(ctx, p.Repo, p.Number, cfg.MergeComment); err != nil {
-			return autoMergeResultMsg{prKey: key, err: err}
-		}
-
-		return autoMergeResultMsg{prKey: key, posted: true}
 	}
 }
 

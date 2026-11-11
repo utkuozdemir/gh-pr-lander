@@ -109,7 +109,6 @@ func parseFlags() (config.Config, error) {
 		orgs                  string
 		pollInterval          time.Duration
 		dataDir               string
-		mergeComment          string
 		autoMaxRetries        int
 		autoCooldown          time.Duration
 		notifications         bool
@@ -121,8 +120,7 @@ func parseFlags() (config.Config, error) {
 	flag.StringVar(&orgs, "orgs", "siderolabs,cosi-project", "comma-separated GitHub orgs to watch")
 	flag.DurationVar(&pollInterval, "interval", 2*time.Minute, "poll interval (minimum 10s)")
 	flag.StringVar(&dataDir, "data-dir", defaultDataDir, "data directory for repo clones, db, and logs")
-	flag.StringVar(&mergeComment, "merge-comment", "/m", "comment to post when merging")
-	flag.IntVar(&autoMaxRetries, "auto-max-retries", 3, "max auto attempts before giving up")
+	flag.IntVar(&autoMaxRetries, "auto-max-retries", 3, "max autorerun attempts before giving up")
 	flag.DurationVar(&autoCooldown, "auto-cooldown", 5*time.Minute, "cooldown between auto-merge/rerun attempts")
 	flag.BoolVar(&notifications, "notifications", true, "enable desktop notifications")
 	flag.IntVar(&rebaseCountdown, "rebase-countdown", 3, "seconds to show success before returning to TUI")
@@ -163,7 +161,6 @@ func parseFlags() (config.Config, error) {
 		Orgs:                  parsedOrgs,
 		PollInterval:          pollInterval,
 		DataDir:               dataDir,
-		MergeComment:          mergeComment,
 		AutoMaxRetries:        autoMaxRetries,
 		AutoCooldown:          autoCooldown,
 		Notifications:         notifications,

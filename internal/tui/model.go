@@ -6,6 +6,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -72,7 +73,7 @@ type model struct {
 	// rerunInFlight guards against GitHub momentarily reporting "all checks
 	// passed" right after a re-run is triggered (issue #1). While a PR is in
 	// flight, a transient passed state is treated as still-running so automerge
-	// does not fire a spurious /m. Keyed by PR; value is the trigger time and
+	// does not fire a spurious merge. Keyed by PR; value is the trigger time and
 	// the head SHA at that moment.
 	rerunInFlight    map[string]time.Time
 	rerunInFlightSHA map[string]string
@@ -249,27 +250,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, tea.Batch(cmds...)
 
-	case commentPostedMsg:
-		switch {
-		case msg.err != nil:
-			slog.Error("failed to post merge comment", "pr", msg.pr.RepoShort(), "error", msg.err)
-			m.status = errorStyle.Render("✗ Failed to post " + m.config.MergeComment + ": " + msg.err.Error())
-		case msg.duplicate:
-			slog.Info("skipped duplicate merge comment", "pr", msg.pr.RepoShort())
-
-			m.status = indicatorWarn.Render("⚠ " + m.config.MergeComment + " already posted less than a minute ago")
-		default:
-			slog.Info("posted merge comment", "pr", msg.pr.RepoShort())
-			m.status = successStyle.Render(fmt.Sprintf("✓ Posted %s on %s", m.config.MergeComment, msg.pr.RepoShort()))
-		}
-
-		m.triggerRefresh()
-
-		return m, tea.Batch(
-			clearStatusCmd(),
-			delayedRefreshCmd(15*time.Second),
-			delayedRefreshCmd(30*time.Second),
-		)
+	case mergeResultMsg:
+		return m.handleMergeResult(msg)
 
 	case checksRerunMsg:
 		if msg.err != nil {
@@ -313,9 +295,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.triggerRefresh()
 
 		return m, tea.Batch(clearStatusCmd(), delayedRefreshCmd(15*time.Second))
-
-	case autoMergeResultMsg:
-		return m.handleAutoMergeResult(msg)
 
 	case autoRerunResultMsg:
 		return m.handleAutoRerunResult(msg)
@@ -417,9 +396,9 @@ func (m model) doMerge() (tea.Model, tea.Cmd) {
 		return m, clearStatusCmd()
 	}
 
-	m.status = fmt.Sprintf("Posting %s on %s...", m.config.MergeComment, item.pr.RepoShort())
+	m.status = fmt.Sprintf("Merging %s...", item.pr.RepoShort())
 
-	return m, postCommentCmd(m.client, item.pr, m.config.MergeComment)
+	return m, mergeCmd(m.client, item.pr, false)
 }
 
 func (m model) doRebase() (tea.Model, tea.Cmd) {
@@ -577,36 +556,34 @@ func (m model) saveDB() error {
 	})
 }
 
-func (m model) handleAutoMergeResult(msg autoMergeResultMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case msg.failed:
-		slog.Error("automerge gave up", "pr", msg.prKey)
-		m.mergeFailed[msg.prKey] = true
-		m.status = errorStyle.Render(
-			fmt.Sprintf(
-				"⚡ %s: %s posted %d times, PR still open — giving up",
-				msg.prKey,
-				m.config.MergeComment,
-				m.config.AutoMaxRetries,
-			),
-		)
-		notify.Send(notify.AutomergeGaveUp, msg.prKey+" — "+m.config.MergeComment+" did not merge it")
-	case msg.posted:
-		slog.Info("automerge posted merge comment", "pr", msg.prKey)
-		m.status = successStyle.Render(fmt.Sprintf("⚡ Automerge: posted %s on %s", m.config.MergeComment, msg.prKey))
-		notify.Send(notify.MergePosted, msg.prKey)
-		m.triggerRefresh()
+func (m model) handleMergeResult(msg mergeResultMsg) (tea.Model, tea.Cmd) {
+	key := msg.pr.RepoShort()
 
-		return m, tea.Batch(
-			clearStatusCmd(),
-			delayedRefreshCmd(15*time.Second),
-			delayedRefreshCmd(30*time.Second),
-		)
-	case msg.err != nil:
-		slog.Error("automerge error", "pr", msg.prKey, "error", msg.err)
+	if msg.err != nil {
+		slog.Error("failed to merge", "pr", key, "auto", msg.auto, "error", msg.err)
+		m.status = errorStyle.Render("✗ Failed to merge " + key + ": " + msg.err.Error())
+
+		// GitHub refused this commit, and asking again would get the same
+		// answer. Automerge tries again when the PR gets a new head commit.
+		// Any other error says nothing about the commit: a base branch that
+		// moved shows the PR as behind on the next fetch, and after a network
+		// or server error automerge tries again once the cooldown is over.
+		if msg.auto && errors.Is(msg.err, github.ErrMergeRefused) {
+			m.mergeFailed[key] = true
+			notify.Send(notify.AutomergeGaveUp, key+": "+msg.err.Error())
+		}
+	} else {
+		slog.Info("merged", "pr", key, "auto", msg.auto)
+		m.status = successStyle.Render("✓ Merged " + key)
 	}
 
-	return m, clearStatusCmd()
+	m.triggerRefresh()
+
+	return m, tea.Batch(
+		clearStatusCmd(),
+		delayedRefreshCmd(15*time.Second),
+		delayedRefreshCmd(30*time.Second),
+	)
 }
 
 func (m model) handleAutoRerunResult(msg autoRerunResultMsg) (tea.Model, tea.Cmd) {

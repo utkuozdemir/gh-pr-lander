@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -156,50 +157,6 @@ func TestFetchPRsKeepsOnlyPRsTheUserTouched(t *testing.T) {
 	want := map[int]string{1: "", 3: "other", 4: "other"}
 	if !maps.Equal(got, want) {
 		t.Fatalf("expected PRs (number -> taken over from) %v, got %v", want, got)
-	}
-}
-
-func TestCountMergeCommentsPaginatesAndRequiresUsername(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	client := &Client{
-		token:    "token",
-		username: "me",
-		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.URL.Query().Get("page") == "2" {
-				body := `[{"body":"/m","created_at":"` + now.Add(-time.Hour).
-					Format(time.RFC3339) +
-					`","user":{"login":"me"}}]`
-
-				return testJSONResponse(body, nil), nil
-			}
-
-			body := `[` +
-				`{"body":"/m","created_at":"` + now.Format(time.RFC3339) + `","user":{"login":"me"}},` +
-				`{"body":"/m","created_at":"` + now.Format(time.RFC3339) + `","user":{"login":"someone-else"}}` +
-				`]`
-
-			return testJSONResponse(body, map[string]string{
-				"Link": `<https://api.github.com/repos/org/repo/issues/1/comments?per_page=100&page=2>; rel="next"`,
-			}), nil
-		})},
-	}
-
-	count, last, err := client.CountMergeComments(context.Background(), "org/repo", 1, "/m")
-	if err != nil {
-		t.Fatalf("CountMergeComments: %v", err)
-	}
-
-	if count != 2 {
-		t.Fatalf("expected 2 matching comments, got %d", count)
-	}
-
-	if !last.Equal(now) {
-		t.Fatalf("expected latest comment time %s, got %s", now, last)
-	}
-
-	client.username = ""
-	if _, _, err := client.CountMergeComments(context.Background(), "org/repo", 1, "/m"); err == nil {
-		t.Fatal("expected unresolved username error")
 	}
 }
 
@@ -413,7 +370,16 @@ func TestPRFromNodeDetectsUnenforcedBehind(t *testing.T) {
 		)
 	}
 
+	// Just fast-forward merged and still listed as open: the base branch is on
+	// the PR's own head commit, which is not behind.
 	node.MergeStateStatus = "CLEAN"
+	node.HeadRef = refNode{Target: targetNode{OID: "new"}}
+
+	p = prFromNode(node)
+	if p.BaseStatus != pr.BaseSynced {
+		t.Fatalf("expected a just merged PR to stay synced, got status %v", p.BaseStatus)
+	}
+
 	node.BaseRef.Target.OID = "old"
 
 	p = prFromNode(node)
@@ -492,4 +458,48 @@ func boolJSON(v bool) string {
 
 func intJSON(v int) string {
 	return strconv.Itoa(v)
+}
+
+func TestFastForwardMergeMovesBaseBranchWithoutForce(t *testing.T) {
+	var gotMethod, gotPath, gotBody string
+
+	status := http.StatusOK
+	client := &Client{
+		token: "token",
+		httpClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body, _ := io.ReadAll(req.Body)
+			gotMethod, gotPath, gotBody = req.Method, req.URL.Path, string(body)
+
+			resp := testJSONResponse(`{"message":"Update is not a fast forward"}`, nil)
+			resp.StatusCode = status
+
+			return resp, nil
+		})},
+	}
+
+	if err := client.FastForwardMerge(context.Background(), "org/repo", "release-1.0", "abc123"); err != nil {
+		t.Fatalf("FastForwardMerge: %v", err)
+	}
+
+	if gotMethod != http.MethodPatch || gotPath != "/repos/org/repo/git/refs/heads/release-1.0" {
+		t.Fatalf("unexpected request %s %s", gotMethod, gotPath)
+	}
+
+	if gotBody != `{"force":false,"sha":"abc123"}` {
+		t.Fatalf("unexpected request body %s", gotBody)
+	}
+
+	status = http.StatusUnprocessableEntity
+
+	err := client.FastForwardMerge(context.Background(), "org/repo", "main", "abc123")
+	if !errors.Is(err, ErrNotFastForward) {
+		t.Fatalf("expected ErrNotFastForward, got %v", err)
+	}
+
+	status = http.StatusBadGateway
+
+	err = client.FastForwardMerge(context.Background(), "org/repo", "main", "abc123")
+	if err == nil || errors.Is(err, ErrMergeRefused) {
+		t.Fatalf("expected a server error that is not a refusal, got %v", err)
+	}
 }

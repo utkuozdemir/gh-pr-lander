@@ -13,11 +13,11 @@ honest — if something here turns out to be wrong, fix it.
 
 `sidero-rebaser` is a terminal (Bubble Tea) tool for the Siderolabs PR
 workflow. At Siderolabs every commit is GPG-signed with a YubiKey, the GitHub
-merge button is never used, and merges happen by commenting `/m` on a PR after
-the author has rebased locally onto the latest base. That means constant
-rebasing, watching CI, and racing to comment `/m` before someone else merges and
-your PR goes stale. This tool watches all your open PRs across configured orgs
-and gives you one-key rebase / merge-comment / rerun, plus automerge and
+merge button is never used, and merges are fast-forwards of the base branch to
+the PR's head commit after the author has rebased locally onto the latest base.
+That means constant rebasing, watching CI, and racing to merge before someone
+else merges and your PR goes stale. This tool watches all your open PRs across
+configured orgs and gives you one-key rebase / merge / rerun, plus automerge and
 autorerun automation.
 
 User-facing details live in `README.md`. This file is about *how the code
@@ -42,7 +42,7 @@ main  ──>  tui  ──>  github ──> pr
   `ComputeOverallStatus`, and `Sort`. Pure, deterministic, no I/O, no API
   shapes. This is the lingua franca every other package speaks.
 - **`internal/github`** — the *only* package that talks to the GitHub API
-  (GraphQL for PR search, REST for comments / Actions / branch deletion). It
+  (GraphQL for PR search, REST for ref updates / Actions / branch deletion). It
   owns the raw API JSON shapes (`types.go`) and the mapping from those shapes
   into `pr.PR` (`status.go`). Nothing outside this package should ever see a
   `prNode` or other API struct. Also hosts the **`Poller`** (see below).
@@ -88,12 +88,12 @@ every interval tick **and** on every `Refresh()` request, and streams
 which blocks on the channel and re-issues itself after each result — a
 continuous update stream.
 
-After any action (post `/m`, rerun, rebase, toggle automerge) the model calls
+After any action (merge, rerun, rebase, toggle automerge) the model calls
 `refresh()` (wired to `Poller.Refresh`) so the new state is fetched right away
 instead of waiting for the interval. `Refresh()` is non-blocking and coalesces
 (buffered channel of size 1). Short follow-up refreshes at 15s/30s
-(`delayedRefreshCmd`) cover GitHub's own propagation lag (e.g. the `/m` bot
-taking a moment to merge).
+(`delayedRefreshCmd`) cover GitHub's own propagation lag (e.g. GitHub
+taking a moment to mark the PR merged after its base branch moved).
 
 ### Responsiveness: adaptive polling (issue #5)
 
@@ -133,18 +133,49 @@ Each parallel worker writes only its own slice index, so no locking is needed.
 If you add concurrency, follow this: take a `context`, use `errgroup`, `Wait`,
 and propagate cancellation.
 
-## Issue #1: spurious `/m` after a re-run (the "rerun settling" guard)
+## Merging: fast-forward through the refs API
+
+`talos-bot` and its `/m` comment were retired in Nov 2026. `m` and automerge now
+call `Client.FastForwardMerge`: `PATCH /repos/{repo}/git/refs/heads/{base}` with
+the PR's head SHA and `force: false`. GitHub moves the base branch only if that
+is a fast-forward (422 `Update is not a fast forward` otherwise) and marks the
+PR merged a moment later. No commit is created, so SHAs and signatures stay.
+
+- **Branch protection is the real gate.** It applies to this ref update like to
+  any push. kres sets `enforce_admins: true` with no bypass allowances
+  (checked on omni and omni-infra-provider-bare-metal), so GitHub refuses an
+  unapproved, red or behind PR even for admins. `StatusReady` only decides when
+  to try. That is why there is no pre-merge re-check in the tool.
+- **The SHA sent is the one from the fetch that was judged ready** (`p.HeadSHA`),
+  never a fresh lookup, so a push landing in between is not merged unseen.
+- **The call is synchronous**, so there is no comment counting, cooldown or
+  duplicate check any more. A refused automerge sets `mergeFailed` for the PR
+  and notifies. It is about one commit, so `checkTransitions` clears it (and the
+  automerge check cooldown) when the head SHA changes. Losing the race to
+  another merge is the common failure and is not a give-up at all: the client
+  returns `ErrNotFastForward` for it, automerge stays on, and the next fetch
+  shows the PR as behind. Only a 4xx answer (`ErrMergeRefused`) sets
+  `mergeFailed`. A network or 5xx error is retried after the cooldown, since it
+  says nothing about the commit. `markAutoCheck` still gates automerge, which keeps a second ref update
+  from going out while the merged PR is still listed as open.
+- **Right after a merge GitHub still lists the PR as open** for a moment, with
+  the base branch tip equal to the PR's head. `behindBase` treats that as not
+  behind, otherwise the `baseRefOid` comparison would call the merged PR
+  behind and autorebase would rebase it.
+- Writing refs on a private repo needs a classic token with the `repo` scope.
+
+## Issue #1: spurious merge attempt after a re-run (the "rerun settling" guard)
 
 **Symptom:** when a PR has failed checks and you press re-run, for a brief
 moment the tool showed "all checks passed", which (with automerge on) fired a
-wrong `/m` that the bot rejects.
+wrong merge attempt (a `/m` comment back then) that gets rejected.
 
 **Cause:** `RerunFailedJobs` resets the failed check runs. For a short window
 GitHub's GraphQL `statusCheckRollup` drops the resetting checks from its
 `contexts` list (and `totalCount`), so the only checks left are the
 already-passing ones. `computeCIStatus` then sees all-passed → `StatusReady` →
-automerge posts `/m`. GitHub's rollup is transiently under-reporting; it is not
-a bug in our computation per se.
+automerge tries to merge. GitHub's rollup is transiently under-reporting, it is
+not a bug in our computation per se.
 
 **Fix:** `internal/tui/auto.go`, `applyRerunSettling`. When a re-run is
 triggered (manual `checksRerunMsg` success, or autorerun `reran`) the PR is
@@ -180,7 +211,7 @@ issue #1 (rollup transiently under-reporting), but a different trigger, and the
 issue #1 guard does **not** cover it: that guard only arms on an *in-tool*
 action, and it explicitly *clears* on a head-SHA change — which is exactly what a
 rebase+push is. So an external push is an unguarded window (and with automerge on
-could fire a spurious `/m`).
+could fire a spurious merge attempt).
 
 **Fix (two parts):**
 
@@ -220,9 +251,8 @@ reported", but GraphQL has no field for missing required checks (`isRequired`
 is only on contexts that exist). The only signal is `mergeStateStatus: BLOCKED`,
 so `prFromNode` sets `MergeBlocked`, and `ComputeOverallStatus` turns a PR that
 would otherwise be `StatusReady` into `StatusBlocked`. Automerge and manual `m`
-both need `StatusReady`, so no `/m` goes out (the bot answers "pr not
-mergeable"). On a live sample of approved PRs, every green one with a computed
-merge state was `CLEAN` or `BEHIND`, never `BLOCKED`, so this does not hold back
+both need `StatusReady`, so no merge is attempted (GitHub would refuse it). On a
+live sample of approved PRs, every green one with a computed merge state was `CLEAN` or `BEHIND`, never `BLOCKED`, so this does not hold back
 mergeable PRs. For the reason, `annotateWorkflowRuns` also fetches Actions runs
 for such a PR and counts conclusion `action_required` into
 `AwaitingApprovalRuns`, shown as "workflow awaiting approval". `w` approves
@@ -248,7 +278,7 @@ jobs". Autorerun needs nothing special: `shouldAutoRerun` already waits for
 
 ## Autorebase queue
 
-With fast-forward merges (`/m`), merging one PR makes every other PR on the same
+With fast-forward merges, merging one PR makes every other PR on the same
 base branch behind again, so rebasing them in parallel only starves CI runners.
 `internal/tui/rebase.go` treats each repo + base branch as a queue ordered by
 `db.yaml`'s `auto_rebase` map (PR key to an order number, appended on enable,
@@ -399,7 +429,7 @@ the generated assignment in real bash to prove it stays literal.
   `baseRefOid` (the commit the PR is based on) with the base branch tip, and
   marks the PR `BaseBehind` with `BehindUnenforced` set, shown as a blue
   "behind (not enforced)". Logic treats it exactly like `BaseBehind`, since
-  `/m` merges fast-forward. `baseRefOid` matched the PR's first commit's
+  the merge is a fast-forward. `baseRefOid` matched the PR's first commit's
   parent on every PR sampled, and costs nothing, while asking for that
   parent doubles the query cost. Where it is enforced, GitHub reports
   `BEHIND` even when a review is also missing, so the flag is honest. It

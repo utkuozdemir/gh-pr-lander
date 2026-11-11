@@ -260,16 +260,30 @@ func (c *Client) annotateWorkflowRuns(ctx context.Context, prs []pr.PR) error {
 	return g.Wait()
 }
 
-// PostCommentRaw posts a comment without any duplicate checking.
-func (c *Client) PostCommentRaw(ctx context.Context, repoFullName string, prNumber int, body string) error {
-	target := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments", repoFullName, prNumber)
+// ErrNotFastForward is returned by FastForwardMerge when the base branch has
+// commits the PR does not have, which is what losing the race to another merge
+// looks like.
+var ErrNotFastForward = errors.New("base branch moved, the PR needs a rebase")
 
-	payload, err := json.Marshal(map[string]string{"body": body})
+// ErrMergeRefused is returned by FastForwardMerge when GitHub answered with a
+// client error, such as a branch protection rule the PR does not meet. Asking
+// again for the same commit gets the same answer, unlike after a network or
+// server error.
+var ErrMergeRefused = errors.New("merge refused")
+
+// FastForwardMerge merges a PR by moving its base branch to the PR's head
+// commit. The update is not forced, so GitHub refuses it unless it is a
+// fast-forward, and branch protection (review, required checks, up to date)
+// applies to it like to any push.
+func (c *Client) FastForwardMerge(ctx context.Context, repoFullName, baseBranch, headSHA string) error {
+	target := fmt.Sprintf("https://api.github.com/repos/%s/git/refs/heads/%s", repoFullName, baseBranch)
+
+	payload, err := json.Marshal(map[string]any{"sha": headSHA, "force": false})
 	if err != nil {
-		return fmt.Errorf("marshal comment: %w", err)
+		return fmt.Errorf("marshal ref update: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, target, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -279,121 +293,34 @@ func (c *Client) PostCommentRaw(ctx context.Context, repoFullName string, prNumb
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("post comment: %w", err)
+		return fmt.Errorf("fast-forward merge: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 
-		return fmt.Errorf("post comment HTTP %d: %s", resp.StatusCode, string(respBody))
+		var apiErr struct {
+			Message string `json:"message"`
+		}
+
+		reason := strings.TrimSpace(string(respBody))
+		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Message != "" {
+			reason = apiErr.Message
+		}
+
+		if strings.Contains(strings.ToLower(reason), "not a fast forward") {
+			return ErrNotFastForward
+		}
+
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			return fmt.Errorf("%w (HTTP %d): %s", ErrMergeRefused, resp.StatusCode, reason)
+		}
+
+		return fmt.Errorf("fast-forward merge HTTP %d: %s", resp.StatusCode, reason)
 	}
 
 	return nil
-}
-
-func (c *Client) listIssueComments(
-	ctx context.Context,
-	repoFullName string,
-	prNumber int,
-	query string,
-) ([]issueComment, error) {
-	nextURL := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments?%s", repoFullName, prNumber, query)
-
-	var comments []issueComment
-
-	for nextURL != "" {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("Authorization", "Bearer "+c.token)
-
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("list comments: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-
-			return nil, fmt.Errorf("list comments HTTP %d: %s", resp.StatusCode, string(body))
-		}
-
-		var page []issueComment
-		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
-			_ = resp.Body.Close()
-
-			return nil, fmt.Errorf("decode comments: %w", err)
-		}
-
-		comments = append(comments, page...)
-		nextURL = nextPageURL(resp.Header.Get("Link"))
-		_ = resp.Body.Close()
-	}
-
-	return comments, nil
-}
-
-// PostComment checks for a recent duplicate, then posts. Returns
-// (duplicate=true, nil) if the authenticated user already posted the same
-// comment within the last minute.
-func (c *Client) PostComment(
-	ctx context.Context,
-	repoFullName string,
-	prNumber int,
-	body string,
-) (duplicate bool, err error) {
-	if c.username == "" {
-		return false, errors.New("authenticated GitHub username is not resolved")
-	}
-
-	comments, err := c.listIssueComments(ctx, repoFullName, prNumber, "sort=created&direction=desc&per_page=100")
-	if err != nil {
-		return false, err
-	}
-
-	for _, comment := range comments {
-		if strings.EqualFold(comment.User.Login, c.username) && strings.TrimSpace(comment.Body) == body {
-			if time.Since(comment.CreatedAt) < time.Minute {
-				return true, nil
-			}
-		}
-	}
-
-	return false, c.PostCommentRaw(ctx, repoFullName, prNumber, body)
-}
-
-// CountMergeComments counts comments with the given body from the
-// authenticated user. Returns the total count and the time of the most recent.
-func (c *Client) CountMergeComments(
-	ctx context.Context,
-	repoFullName string,
-	prNumber int,
-	commentBody string,
-) (count int, lastTime time.Time, err error) {
-	if c.username == "" {
-		return 0, time.Time{}, errors.New("authenticated GitHub username is not resolved")
-	}
-
-	comments, err := c.listIssueComments(ctx, repoFullName, prNumber, "per_page=100")
-	if err != nil {
-		return 0, time.Time{}, err
-	}
-
-	for _, comment := range comments {
-		if strings.EqualFold(comment.User.Login, c.username) && strings.TrimSpace(comment.Body) == commentBody {
-			count++
-
-			if comment.CreatedAt.After(lastTime) {
-				lastTime = comment.CreatedAt
-			}
-		}
-	}
-
-	return count, lastTime, nil
 }
 
 // FailedWorkflowRunsSummary aggregates the failed Actions runs for a head SHA,

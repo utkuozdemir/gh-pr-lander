@@ -51,7 +51,7 @@ func (m *model) autoMergeCmd(p pr.PR) tea.Cmd {
 		return nil
 	}
 
-	return autoMergeCmd(m.client, p, m.config)
+	return mergeCmd(m.client, p, true)
 }
 
 func (m *model) autoRerunCmd(p pr.PR) tea.Cmd {
@@ -119,7 +119,7 @@ func (m model) clearAutoCheck(label, key string) {
 //
 // After a re-run is triggered, GitHub's check rollup can briefly drop the
 // resetting checks and report "all passed", which would make a failed PR look
-// READY and trigger a spurious /m. We mark such PRs in flight and, while the
+// READY and trigger a spurious merge. We mark such PRs in flight and, while the
 // settle grace is active, treat any transient passed/none state as still
 // running. We stop settling as soon as GitHub catches up (CI shows running
 // again), the head SHA changes (a new push), or the grace window elapses.
@@ -185,7 +185,7 @@ func (m *model) applyRerunSettling(prs []pr.PR) []pr.PR {
 
 		// Still settling. A "passed"/"none" reading here is suspect (the failed
 		// checks were just reset), so treat it as running to keep the PR out of
-		// READY and block a spurious /m.
+		// READY and block a spurious merge.
 		if prs[i].CIStatus == pr.CIPassed || prs[i].CIStatus == pr.CINone {
 			prs[i].CIStatus = pr.CIRunning
 			prs[i].OverallStatus = pr.ComputeOverallStatus(prs[i])
@@ -211,7 +211,7 @@ func (m *model) applyRerunSettling(prs []pr.PR) []pr.PR {
 // new head commit and re-runs CI, but the new commit's checks register over a
 // few seconds. During that window the check rollup can report a small, all-green
 // subset (sometimes a single passing check), which makes the PR look READY and
-// could fire a spurious /m. Unlike the rerun guard, no in-tool action arms here,
+// could fire a spurious merge. Unlike the rerun guard, no in-tool action arms here,
 // so we lean on a cross-fetch signal: if a PR's head SHA just changed and its
 // current check count is below what the previous commit ultimately had, the new
 // commit's checks have not all registered yet, so a transient passed/none
