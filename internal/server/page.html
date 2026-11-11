@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>Pull requests</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 <style>
 :root {
   --bg: #f6f7f9; --card: #ffffff; --text: #1c2128; --muted: #636c76; --line: #d8dee4;
@@ -25,12 +26,16 @@ body {
 }
 main { max-width: 760px; margin: 0 auto; padding: 12px 16px 40px; }
 header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 12px; }
-h1 { font-size: 18px; margin: 0; }
+h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 8px; }
 h2 { font-size: 13px; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .meta { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
 .flash { border: 1px solid var(--line); border-left: 4px solid var(--info); background: var(--card);
   padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; overflow-wrap: anywhere; }
 .flash.err { border-left-color: var(--fail); }
+/* A message about an action goes away by itself, an error a little later. */
+.flash.note { max-height: 200px; overflow: hidden; animation: gone .4s 5s forwards; }
+.flash.note.err { animation-delay: 15s; }
+@keyframes gone { to { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; margin: 0; border-width: 0; } }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
 .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .ref { font-size: 13px; color: var(--muted); text-decoration: none; overflow-wrap: anywhere; }
@@ -64,10 +69,10 @@ button:disabled { opacity: .4; cursor: default; }
 
 {{define "main"}}
 <header>
-  <h1>Pull requests</h1>
+  <h1><img src="/static/favicon.svg" alt="" width="24" height="24">Pull requests</h1>
   <form hx-post="/refresh"><button>Refresh</button></form>
 </header>
-{{if .Flash.Text}}<div class="flash{{if .Flash.Err}} err{{end}}" role="status">{{.Flash.Text}}</div>{{end}}
+{{if .Flash.Text}}<div class="flash note{{if .Flash.Err}} err{{end}}" role="status">{{.Flash.Text}}</div>{{end}}
 {{template "list" .}}
 {{end}}
 

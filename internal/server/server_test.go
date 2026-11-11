@@ -203,3 +203,19 @@ func TestFormsInTheListNameTheirOwnTarget(t *testing.T) {
 		t.Fatalf("expected each of the %d forms in the list to target #main, got %q", forms, body)
 	}
 }
+
+func TestRefreshAnswersWithTheFreshList(t *testing.T) {
+	s, _ := testServer(t, readyPR(1, "aaa"))
+
+	// The poller answers a refresh with a new fetch result.
+	s.refresh = func() {
+		s.works.Go(func() {
+			s.handleFetch(github.FetchResult{PRs: []pr.PR{readyPR(1, "aaa"), readyPR(2, "bbb")}})
+		})
+	}
+
+	_, body := post(t, s, "/refresh", nil, nil)
+	if !strings.Contains(body, "Refreshed") || !strings.Contains(body, "#2</b>") {
+		t.Fatalf("expected the answer to show the newly fetched PR, got %q", body)
+	}
+}

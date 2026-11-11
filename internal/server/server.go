@@ -20,7 +20,7 @@ import (
 	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
-//go:embed page.html static/htmx.min.js
+//go:embed page.html static/htmx.min.js static/favicon.svg
 var assets embed.FS
 
 // Server owns the engine state. The fetch loop and the HTTP handlers both use
@@ -30,6 +30,7 @@ type Server struct {
 	state     *engine.State
 	lastFetch time.Time
 	fetchErr  error
+	fetched   chan struct{} // closed and replaced when a fetch result arrives
 
 	refresh  func()        // ask the poller to fetch immediately
 	followUp time.Duration // how long after an action to fetch once more
@@ -58,6 +59,7 @@ func New(cfg config.Config, client engine.Client, refresh func()) (*Server, erro
 		refresh:  refresh,
 		followUp: 15 * time.Second,
 		tmpl:     tmpl,
+		fetched:  make(chan struct{}),
 		stop:     make(chan struct{}),
 	}, nil
 }
@@ -85,6 +87,10 @@ func (s *Server) Run(ctx context.Context, results <-chan github.FetchResult) err
 
 func (s *Server) handleFetch(res github.FetchResult) {
 	s.mu.Lock()
+
+	// Wake whoever is waiting for fresh data, such as the Refresh button.
+	close(s.fetched)
+	s.fetched = make(chan struct{})
 
 	if res.Err != nil {
 		slog.Error("failed to fetch PRs", "error", res.Err)
@@ -177,7 +183,19 @@ func (s *Server) Handler() http.Handler {
 
 	// The page has no login, so a request that another website makes through
 	// the owner's browser must not be able to start a merge.
-	return http.NewCrossOriginProtection().Handler(mux)
+	return http.NewCrossOriginProtection().Handler(logActions(mux))
+}
+
+// logActions logs what was asked for from the page. The page's own polling is
+// left out, it would bury everything else.
+func logActions(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			slog.Info("page action", "action", r.URL.Path, "pr", r.FormValue("key"), "switch", r.FormValue("kind"))
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handlePage(w http.ResponseWriter, _ *http.Request) {
@@ -188,9 +206,22 @@ func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {
 	s.render(w, "list", flash{})
 }
 
-func (s *Server) handleRefresh(w http.ResponseWriter, _ *http.Request) {
+// handleRefresh fetches now and answers with the fresh list, so the button
+// shows its effect at once instead of on the page's next poll.
+func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	fetched := s.fetched
+	s.mu.Unlock()
+
 	s.refresh()
-	s.render(w, "main", flash{Text: "Refreshing"})
+
+	select {
+	case <-fetched:
+		s.render(w, "main", flash{Text: "Refreshed"})
+	case <-r.Context().Done():
+	case <-time.After(15 * time.Second):
+		s.render(w, "main", flash{Text: "GitHub is slow to answer, the list will update when it does", Err: true})
+	}
 }
 
 func (s *Server) handleToggle(w http.ResponseWriter, r *http.Request) {

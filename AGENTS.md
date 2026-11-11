@@ -207,6 +207,21 @@ and the list update together. htmx is embedded (`static/htmx.min.js`, version
 2.0.4) so the page loads nothing from other sites. The page is drawn from
 `snapshot()`, a copy taken under the lock, so templates never touch the engine.
 
+Three things to know when changing the page:
+
+- **htmx hands `hx-target` and `hx-swap` down to child elements.** The list
+  swaps itself (`hx-target="this"`), so every form inside it names `#main` as
+  its own target. Without that a form's answer (header, message and list)
+  lands where only the list was, and the header shows twice.
+- **The flash message sits outside the list**, so the list's polling never
+  replaces it. It goes away through a CSS animation (5s, 15s for an error).
+- **Refresh waits for the fetch it asked for** (`Server.fetched`, a channel
+  closed and replaced on every fetch result) and answers with the fresh list.
+
+Only `POST` requests are logged (`logActions`), since the page polls every
+10s. `static/favicon.svg` is the project logo: the favicon, the mark in the
+page header and the image at the top of the README all use that one file.
+
 **Shipping.** `Dockerfile` builds a distroless nonroot image and
 `.github/workflows/image.yml` pushes it to `ghcr.io/utkuozdemir/gh-pr-lander`
 for both amd64 and arm64 when a `v*` tag is pushed, and creates the GitHub

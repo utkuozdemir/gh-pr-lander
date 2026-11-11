@@ -1,3 +1,5 @@
+<p align="center"><img src="internal/server/static/favicon.svg" width="96" alt="gh-pr-lander logo"></p>
+
 # gh-pr-lander
 
 Lands your GitHub pull requests in repositories where commits are signed and merges are fast-forward only: a terminal app, and a server with a small page for when you are away from it.
