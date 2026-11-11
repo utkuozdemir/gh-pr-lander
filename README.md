@@ -20,7 +20,7 @@ A PR that looks approved and green but that GitHub still blocks from merging sho
 
 - `r` rebases. Drops into a real local `git rebase` so your YubiKey signs the commits. Returns to the TUI after a few seconds on success.
 - `m` fast-forwards the base branch to the PR's head commit. Branch protection still applies, so GitHub refuses a PR that is unapproved, red or behind.
-- `a` toggles automerge. Merges automatically when the PR is ready. If GitHub refuses the merge, it tries again only after the PR gets a new head commit. A network or server error is retried after the cooldown.
+- `a` toggles automerge. Merges automatically when the PR is ready: approved, up to date, and every required check green. A check that is not required may still be running. If GitHub refuses the merge, it tries again only after the PR gets a new head commit. A network or server error is retried after the cooldown.
 - `A` toggles autorerun. Re-runs failed CI jobs automatically. Gives up based on workflow `run_attempt` from the GitHub API.
 - `b` toggles autorebase. Rebases the PR in the background when it falls behind its base branch, one PR at a time per repo and base branch (see below). A failed rebase, usually a missed YubiKey touch, is not retried: the row shows why it failed, a notification asks for you, and its queue waits until you press `b` on it again to retry, or rebase it with `r`.
 - `t` re-runs failed CI jobs manually.

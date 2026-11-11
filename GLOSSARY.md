@@ -9,7 +9,7 @@ Merging a pull request by moving its base branch to the pull request's head comm
 _Avoid_: `/m`, merge comment, merge button
 
 **Ready**:
-A pull request that is approved, has passing checks and is up to date with its base branch, so a fast-forward merge would be accepted.
+A pull request that is approved, has every required check passing and is up to date with its base branch, so a fast-forward merge would be accepted. A check that is not required may still be running.
 _Avoid_: mergeable, green
 
 **Automerge**:

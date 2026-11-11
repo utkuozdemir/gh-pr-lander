@@ -534,3 +534,41 @@ func TestFetchPRsWithNoOrgsSearchesEverywhere(t *testing.T) {
 		t.Fatalf("expected one search with no org qualifier, got %d PRs and queries %q", len(prs), queries)
 	}
 }
+
+func TestComputeCIStatusDoesNotWaitForOptionalChecks(t *testing.T) {
+	node := prNode{}
+	node.Commits.Nodes = []commitNode{{}}
+	node.Commits.Nodes[0].Commit.StatusCheckRollup = &statusCheckRollup{State: "PENDING"}
+	rollup := node.Commits.Nodes[0].Commit.StatusCheckRollup
+	rollup.Contexts.TotalCount = 2
+	rollup.Contexts.Nodes = []contextNode{
+		{TypeName: "CheckRun", Status: "COMPLETED", Conclusion: "SUCCESS"},
+		{TypeName: "CheckRun", Status: "IN_PROGRESS"},
+	}
+
+	// Without GitHub's word that the open check is not required, wait for it.
+	node.MergeStateStatus = "BLOCKED"
+
+	if status, _ := computeCIStatus(node); status != pr.CIRunning {
+		t.Fatalf("expected CIRunning while a check that may be required runs, got %v", status)
+	}
+
+	// UNSTABLE: mergeable now, the check still running is not required.
+	node.MergeStateStatus = "UNSTABLE"
+
+	status, summary := computeCIStatus(node)
+	if status != pr.CIPassed || summary.Optional != 1 {
+		t.Fatalf("expected CIPassed with one optional check open, got %v and %+v", status, summary)
+	}
+
+	if got := summary.String(); got != "1/2 passed, 1 optional still running" {
+		t.Fatalf("unexpected summary %q", got)
+	}
+
+	// A failed check still shows as failed, required or not.
+	rollup.Contexts.Nodes[1] = contextNode{TypeName: "CheckRun", Status: "COMPLETED", Conclusion: "FAILURE"}
+
+	if status, _ := computeCIStatus(node); status != pr.CIFailed {
+		t.Fatalf("expected CIFailed for a failed check, got %v", status)
+	}
+}

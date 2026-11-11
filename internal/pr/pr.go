@@ -59,6 +59,10 @@ type CheckSummary struct {
 	Failed  int
 	Running int
 	Pending int
+	// Optional is how many of the running and pending checks GitHub does not
+	// require for a merge. It is only known, and only set, when every required
+	// check has passed.
+	Optional int
 }
 
 func (cs CheckSummary) String() string {
@@ -68,6 +72,10 @@ func (cs CheckSummary) String() string {
 
 	if cs.Failed > 0 {
 		return fmt.Sprintf("%d/%d failed", cs.Failed, cs.Total)
+	}
+
+	if cs.Optional > 0 {
+		return fmt.Sprintf("%d/%d passed, %d optional still running", cs.Passed, cs.Total, cs.Optional)
 	}
 
 	if cs.Running > 0 || cs.Pending > 0 {

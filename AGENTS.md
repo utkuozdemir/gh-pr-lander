@@ -346,6 +346,34 @@ only ever push toward `CIRunning`, so they compose without fighting. Tested in
 `internal/engine/auto_test.go` (settling) and `internal/github/client_test.go`
 (rollup state), no network or timing flakiness.
 
+## Checks that are not required do not hold up a merge (`UNSTABLE`)
+
+A PR whose required checks are all green can be merged while other checks are
+still running, and GitHub's page says so ("Able to merge, some non-required
+checks are still in progress"). The tool used to wait for every check, so a
+check that never reports (a coverage service waiting for an upload, seen
+hanging for 15+ minutes) kept a mergeable PR out of `StatusReady`, with
+automerge waiting and "merge" refused.
+
+The signal is `mergeStateStatus: UNSTABLE`, which GitHub computes for exactly
+this: mergeable now, with a non-required check not passed. In
+`computeCIStatus`, when checks are still running or pending and the state is
+`UNSTABLE`, the result is `CIPassed` and `CheckSummary.Optional` holds how many
+are still open, shown as "14/15 passed, 1 optional still running".
+
+- **Per-check `isRequired` cannot be used.** It needs the PR number as an
+  argument, and inside the search the tool runs (many PRs in one query) there
+  is no way to give each node its own. Without the argument GitHub returns the
+  contexts as null.
+- **A failed check still means `CIFailed`**, required or not, even though
+  GitHub would let the merge through. That stays the owner's call.
+- **The settling guards still apply**, since they rewrite `CIPassed` back to
+  `CIRunning` when a commit's check count is suspiciously low.
+- `UNKNOWN` (GitHub has not computed the state yet) changes nothing, so the
+  PR waits one more poll.
+- The retired merge bot was stricter: it only merged on `clean` or
+  `has_hooks`, so it also waited for non-required checks.
+
 ## Required checks that never started (`BLOCKED` but green)
 
 A fork's workflows wait for a maintainer to approve them before they run. Until

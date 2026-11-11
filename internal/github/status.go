@@ -190,6 +190,17 @@ func computeCIStatus(node prNode) (pr.CIStatus, pr.CheckSummary) {
 	}
 
 	if summary.Running > 0 || summary.Pending > 0 {
+		// GitHub computes UNSTABLE for a PR that could be merged right now
+		// while a check that is not required has not passed. So every required
+		// check is green, and whatever is still open does not hold up a merge.
+		// A check that never reports, such as a coverage service waiting for
+		// an upload, would otherwise keep a mergeable PR waiting for good.
+		if strings.EqualFold(node.MergeStateStatus, "UNSTABLE") {
+			summary.Optional = summary.Running + summary.Pending
+
+			return pr.CIPassed, summary
+		}
+
 		return pr.CIRunning, summary
 	}
 
