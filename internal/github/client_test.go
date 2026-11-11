@@ -285,9 +285,9 @@ func TestComputeCIStatusTreatsUnfetchedChecksAsPending(t *testing.T) {
 				Contexts: contextConn{
 					TotalCount: 2,
 					Nodes: []contextNode{{
-						TypeName:   "CheckRun",
-						Status:     "COMPLETED",
-						Conclusion: "SUCCESS",
+						TypeName:   typeCheckRun,
+						Status:     checkCompleted,
+						Conclusion: stateSuccess,
 					}},
 				},
 			}},
@@ -313,9 +313,9 @@ func TestComputeCIStatusHonorsPendingRollupState(t *testing.T) {
 				Contexts: contextConn{
 					TotalCount: 1,
 					Nodes: []contextNode{{
-						TypeName:   "CheckRun",
-						Status:     "COMPLETED",
-						Conclusion: "SUCCESS",
+						TypeName:   typeCheckRun,
+						Status:     checkCompleted,
+						Conclusion: stateSuccess,
 					}},
 				},
 			}},
@@ -542,8 +542,8 @@ func TestComputeCIStatusDoesNotWaitForOptionalChecks(t *testing.T) {
 	rollup := node.Commits.Nodes[0].Commit.StatusCheckRollup
 	rollup.Contexts.TotalCount = 2
 	rollup.Contexts.Nodes = []contextNode{
-		{TypeName: "CheckRun", Status: "COMPLETED", Conclusion: "SUCCESS"},
-		{TypeName: "CheckRun", Status: "IN_PROGRESS"},
+		{TypeName: typeCheckRun, Status: checkCompleted, Conclusion: stateSuccess},
+		{TypeName: typeCheckRun, Status: "IN_PROGRESS"},
 	}
 
 	// Without GitHub's word that the open check is not required, wait for it.
@@ -566,7 +566,7 @@ func TestComputeCIStatusDoesNotWaitForOptionalChecks(t *testing.T) {
 	}
 
 	// A failed check still shows as failed, required or not.
-	rollup.Contexts.Nodes[1] = contextNode{TypeName: "CheckRun", Status: "COMPLETED", Conclusion: "FAILURE"}
+	rollup.Contexts.Nodes[1] = contextNode{TypeName: typeCheckRun, Status: checkCompleted, Conclusion: "FAILURE"}
 
 	if status, _ := computeCIStatus(node); status != pr.CIFailed {
 		t.Fatalf("expected CIFailed for a failed check, got %v", status)

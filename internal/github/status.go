@@ -149,11 +149,11 @@ func computeCIStatus(node prNode) (pr.CIStatus, pr.CheckSummary) {
 		summary.Total++
 
 		switch ctx.TypeName {
-		case "CheckRun":
+		case typeCheckRun:
 			switch strings.ToUpper(ctx.Status) {
-			case "COMPLETED":
+			case checkCompleted:
 				switch strings.ToUpper(ctx.Conclusion) {
-				case "SUCCESS", "NEUTRAL", "SKIPPED":
+				case stateSuccess, "NEUTRAL", "SKIPPED":
 					summary.Passed++
 				default:
 					summary.Failed++
@@ -165,7 +165,7 @@ func computeCIStatus(node prNode) (pr.CIStatus, pr.CheckSummary) {
 			}
 		case "StatusContext":
 			switch strings.ToUpper(ctx.State) {
-			case "SUCCESS":
+			case stateSuccess:
 				summary.Passed++
 			case "FAILURE", "ERROR":
 				summary.Failed++

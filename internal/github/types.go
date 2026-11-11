@@ -161,6 +161,13 @@ type workflowRun struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// Values GitHub uses in the check rollup.
+const (
+	typeCheckRun   = "CheckRun"
+	checkCompleted = "COMPLETED"
+	stateSuccess   = "SUCCESS"
+)
+
 const prQuery = `query($query: String!, $after: String) {
   search(query: $query, type: ISSUE, first: 25, after: $after) {
     pageInfo {
