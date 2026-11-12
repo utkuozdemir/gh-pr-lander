@@ -17,14 +17,6 @@ import (
 	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
-// ConfigPath returns the path to the optional user-provided gitconfig that is
-// included into every clone (signing key, identity, etc.).
-func ConfigPath() string {
-	home, _ := os.UserHomeDir()
-
-	return filepath.Join(home, ".config", "gh-pr-lander", "gitconfig")
-}
-
 // RepoDir returns the path where the tool keeps its own clone of a fork, e.g.
 // ~/.gh-pr-lander/repos/you/widgets-fork. The tool never touches the
 // user's own working directories.
@@ -99,10 +91,6 @@ func BuildRebaseScript(dataDir string, p pr.PR, countdown int) (string, error) {
 		"fi",
 		"",
 		`cd "${REPO_PATH}"`,
-		"",
-		"# Include user-provided gitconfig (signing keys, user identity, etc.)",
-		"# Git silently ignores the include if the file doesn't exist.",
-		"git config --local include.path " + shellQuote(ConfigPath()),
 		"",
 		"# Ensure origin points to fork",
 		`git remote set-url origin "${FORK_URL}"`,

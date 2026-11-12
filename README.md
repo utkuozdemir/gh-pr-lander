@@ -122,20 +122,16 @@ A container image is published as `ghcr.io/utkuozdemir/gh-pr-lander` for each ve
 
 ## Git identity and signing
 
-Clones under `~/.gh-pr-lander/repos/` inherit your global gitconfig. If you need different settings (signing key, email, etc.), put them in `~/.config/gh-pr-lander/gitconfig`:
+The clones under `~/.gh-pr-lander/repos/` use your global git config, so rebases are signed like any other commit of yours.
+
+If these clones need a different identity or signing key, git can do that itself. Add this to your global git config and put the settings into the file it points at:
 
 ```
-[user]
-    name = Your Name
-    email = you@example.com
-    signingkey = YOUR_KEY_FINGERPRINT
-[commit]
-    gpgSign = true
-[tag]
-    gpgSign = true
+[includeIf "gitdir:~/.gh-pr-lander/repos/"]
+    path = ~/.config/git/pr-lander
 ```
 
-Gets included in every clone automatically.
+With a custom `--data-dir`, use that directory in the `gitdir:` pattern.
 
 ## Logs
 
