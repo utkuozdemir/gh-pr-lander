@@ -57,6 +57,7 @@ var helpSections = []helpSection{
 		{"CI", hint.Checks + " \"optional still running\": " + hint.ChecksOptional +
 			" \"workflow awaiting approval\": " + hint.ChecksUnapproved},
 		{"2 re-runs", hint.Reruns},
+		{"re-running…", hint.Rerunning},
 		{"Review", hint.Review},
 		{"Comments", hint.CommentCount},
 		{"1 note", hint.Note},

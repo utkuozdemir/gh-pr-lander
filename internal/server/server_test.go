@@ -525,3 +525,28 @@ func TestPageShowsTheRerunCount(t *testing.T) {
 		t.Fatalf("expected the count on the one PR that was re-run, got %q", body)
 	}
 }
+
+// After a re-run GitHub still shows the PR as failed for a moment. The button
+// must not look as if nothing happened, or invite a second press.
+func TestRerunButtonShowsThatARerunWasStarted(t *testing.T) {
+	p := readyPR(1, "aaa")
+	p.CIStatus, p.OverallStatus = pr.CIFailed, pr.StatusFailed
+	p.FailedWorkflowRunsKnown, p.FailedWorkflowRuns = true, 1
+
+	s, _ := testServer(t, p)
+
+	_, body := post(t, s, "/rerun", url.Values{"key": {"org/repo#1"}, "sha": {"aaa"}}, nil)
+	if !strings.Contains(body, "Re-running…</button>") || strings.Contains(body, ">Re-run failed</button>") {
+		t.Fatalf("expected the button to say a re-run is on its way, got %q", body)
+	}
+
+	// GitHub shows the checks as running: the normal button is back, disabled
+	// like for any PR without a failed check.
+	running := p
+	running.CIStatus, running.OverallStatus = pr.CIRunning, pr.StatusPending
+	s.handleFetch(github.FetchResult{PRs: []pr.PR{running}})
+
+	if data := s.snapshot(); data.PRs[0].Rerunning || data.PRs[0].CanRerun {
+		t.Fatalf("expected the plain disabled button once the checks run, got %+v", data.PRs[0])
+	}
+}

@@ -140,6 +140,16 @@ func (s *State) MarkRerunInFlight(key, headSHA string) {
 	s.RerunInFlightSHA[key] = headSHA
 }
 
+// Rerunning reports whether a re-run of the PR's head commit was started and
+// GitHub does not show it as running yet. For a moment after a re-run the PR
+// still looks failed, and nothing else tells the owner that it worked.
+func (s *State) Rerunning(p pr.PR) bool {
+	key := p.RepoShort()
+	_, started := s.RerunInFlight[key]
+
+	return started && s.RerunInFlightSHA[key] == p.HeadSHA
+}
+
 func (s *State) clearRerunInFlight(key string) {
 	delete(s.RerunInFlight, key)
 	delete(s.RerunInFlightSHA, key)

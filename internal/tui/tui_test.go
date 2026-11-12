@@ -589,3 +589,27 @@ func TestRowShowsTheRerunCount(t *testing.T) {
 		t.Fatalf("expected nothing for a commit that was never re-run, got %q", row)
 	}
 }
+
+func TestRowShowsThatARerunWasStarted(t *testing.T) {
+	p := pr.PR{Repo: "org/repo", Number: 1, HeadSHA: "aaa", CIStatus: pr.CIFailed}
+	m := testAutoToggleModel(t, p)
+	m.width = 120
+
+	if strings.Contains(m.renderActivePR(p, false), "re-running") {
+		t.Fatal("expected nothing before a re-run")
+	}
+
+	updated, _ := m.Update(engine.RerunResult{PR: p})
+	m = updated.(model)
+
+	if !strings.Contains(m.renderActivePR(p, false), "re-running…") {
+		t.Fatalf("expected the row to say a re-run is on its way, got %q", m.renderActivePR(p, false))
+	}
+
+	// A new commit is not being re-run.
+	p.HeadSHA = "bbb"
+
+	if strings.Contains(m.renderActivePR(p, false), "re-running") {
+		t.Fatal("expected nothing for a new commit")
+	}
+}

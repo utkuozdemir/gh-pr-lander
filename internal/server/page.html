@@ -95,6 +95,9 @@ button[aria-pressed="true"] { background: var(--on); border-color: var(--on); co
 }
 button.go { border-color: var(--ok); color: var(--ok); font-weight: 600; }
 button:disabled { opacity: .4; cursor: default; }
+/* From the tap until the answer is back, the pressed button shows that it was
+   taken and cannot be pressed again. htmx marks the form it is waiting for. */
+.htmx-request button { opacity: .5; pointer-events: none; cursor: progress; }
 .empty { color: var(--muted); padding: 24px 0; text-align: center; }
 footer { padding: 14px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
 </style>
@@ -218,7 +221,11 @@ footer { padding: 14px 0 0; color: var(--muted); font-size: 12px; text-align: ce
         <form hx-post="/rerun" hx-target="#main" hx-swap="innerHTML">
           <input type="hidden" name="key" value="{{.Key}}">
           <input type="hidden" name="sha" value="{{.SHA}}">
+          {{if .Rerunning -}}
+          <button title="{{$.Hint.Rerunning}}" disabled>Re-running…</button>
+          {{- else -}}
           <button {{if .CanRerun}}title="{{$.Hint.Rerun}}"{{else}}title="{{$.Hint.RerunNothing}}" disabled{{end}}>Re-run failed</button>
+          {{- end}}
         </form>
       </div>
     </div>

@@ -18,6 +18,7 @@ const (
 	MergeNotReady    = "This pull request is not ready to merge yet."
 	Rerun            = "Re-run the failed GitHub Actions jobs of the latest commit."
 	RerunNothing     = "There are no failed checks to re-run."
+	Rerunning        = "A re-run was started. GitHub takes a moment to show it."
 	Refresh          = "Fetch the pull requests from GitHub now."
 	Open             = "Open the pull request on GitHub."
 )

@@ -33,7 +33,7 @@ type hints struct {
 	Automerge, Approvals, ApprovalsDefault, Approvals2, Approvals3 string
 	Comments, CommentsAny, CommentsResolved, Autorerun             string
 	Merge, MergeNotReady, Rerun, RerunNothing, Refresh, Open       string
-	Updated, Version, MergeGaveUp, RerunGaveUp                     string
+	Updated, Version, MergeGaveUp, RerunGaveUp, Rerunning          string
 }
 
 var pageHints = hints{
@@ -56,6 +56,7 @@ var pageHints = hints{
 	Version:          hint.Version,
 	MergeGaveUp:      hint.MergeGaveUp,
 	RerunGaveUp:      hint.RerunGaveUp,
+	Rerunning:        hint.Rerunning,
 }
 
 // mark is one piece of a PR's status: its text, the tone to show it in, and
@@ -107,6 +108,9 @@ type prView struct {
 	RerunGaveUp bool
 	CanMerge    bool
 	CanRerun    bool
+	// Rerunning is set from the moment a re-run was started until GitHub
+	// shows the checks as running.
+	Rerunning bool
 }
 
 type goneView struct {
@@ -153,7 +157,8 @@ func (s *Server) snapshot() pageData {
 			MergeGaveUp:  s.state.IsMergeFailed(key),
 			RerunGaveUp:  s.state.IsRerunFailed(key),
 			CanMerge:     p.OverallStatus == pr.StatusReady,
-			CanRerun:     p.CIStatus == pr.CIFailed,
+			CanRerun:     p.CIStatus == pr.CIFailed && !s.state.Rerunning(p),
+			Rerunning:    s.state.Rerunning(p),
 		}
 
 		if p.CommentThreads() > 0 {

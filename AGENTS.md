@@ -245,6 +245,14 @@ Three things to know when changing the page:
   waits for" and "gave up" lines sit below a card's buttons. Both used to be
   above, so the row jumped down on every tap and back up when the message
   faded, and the button left the cursor.
+- **A pressed button shows that it was taken.** htmx puts the class
+  `htmx-request` on the form it is waiting for, and the page dims that
+  form's button and ignores further taps until the answer is back. After a
+  re-run GitHub keeps showing the PR as failed for a while, so the page shows
+  a disabled "Re-running…" button and the terminal row "re-running…" until
+  the checks show as running (`State.Rerunning`, from the same in-flight mark
+  as the issue #1 guard). Without it the button looked untouched and invited
+  a second press.
 - **Ages count every second.** The server writes each age ("54s ago") as
   words plus `data-age` in seconds, and the one script in `page.html` adds
   the time since the element arrived. It counts from arrival, not from a
