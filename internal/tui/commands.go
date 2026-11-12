@@ -32,6 +32,9 @@ type clearStatusMsg struct{}
 
 type delayedRefreshMsg struct{}
 
+// ageTickMsg arrives once a second, so the ages on screen keep counting.
+type ageTickMsg struct{}
+
 // Commands
 
 // waitForResultsCmd blocks on the poller's result stream and yields one
@@ -82,6 +85,12 @@ func approveWorkflowsCmd(client Client, p pr.PR) tea.Cmd {
 
 		return workflowsApprovedMsg{pr: p, err: err}
 	}
+}
+
+func ageTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(_ time.Time) tea.Msg {
+		return ageTickMsg{}
+	})
 }
 
 func clearStatusCmd() tea.Cmd {

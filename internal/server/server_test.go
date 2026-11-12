@@ -385,3 +385,27 @@ func TestListCarriesTheVersionAndThePRCount(t *testing.T) {
 		t.Fatalf("expected the version and the PR count in the list, got %q", body)
 	}
 }
+
+func TestAgesCarryTheirSecondsForThePageToKeepCounting(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		42 * time.Second:            "42s ago",
+		95 * time.Second:            "1m 35s ago",
+		2*time.Hour + 5*time.Minute: "2h 5m ago",
+		-3 * time.Second:            "0s ago", // a clock that moved back
+	} {
+		got := ago(time.Now().Add(-d))
+		if got.Text != want || got.Seconds != max(int(d.Seconds()), 0) {
+			t.Fatalf("%s: expected %q, got %+v", d, want, got)
+		}
+	}
+
+	s, _ := testServer(t, readyPR(1, "aaa"))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/prs", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	if !strings.Contains(rec.Body.String(), `data-age="0"`) {
+		t.Fatalf("expected the list to carry the age in seconds, got %q", rec.Body.String())
+	}
+}

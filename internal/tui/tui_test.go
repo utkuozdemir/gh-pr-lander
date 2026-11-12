@@ -526,3 +526,11 @@ func TestHelpViewExplainsKeysAndStatuses(t *testing.T) {
 		t.Fatal("expected the key to only close the help")
 	}
 }
+
+func TestAgeTickKeepsItselfGoing(t *testing.T) {
+	m := model{State: &engine.State{}}
+
+	if _, cmd := m.Update(ageTickMsg{}); cmd == nil {
+		t.Fatal("expected the tick to schedule the next one")
+	}
+}

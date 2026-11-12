@@ -241,6 +241,12 @@ Three things to know when changing the page:
   waits for" and "gave up" lines sit below a card's buttons. Both used to be
   above, so the row jumped down on every tap and back up when the message
   faded, and the button left the cursor.
+- **Ages count every second.** The server writes each age ("54s ago") as
+  words plus `data-age` in seconds, and the one script in `page.html` adds
+  the time since the element arrived. It counts from arrival, not from a
+  timestamp, so the server's and the browser's clocks never have to agree.
+  `ago` in `view.go` and `words` in the script format the same way. The
+  terminal app redraws once a second for the same effect (`ageTickMsg`).
 - **Refresh waits for the fetch it asked for** (`Server.fetched`, a channel
   closed and replaced on every fetch result) and answers with the fresh list.
 

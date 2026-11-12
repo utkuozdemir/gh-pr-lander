@@ -97,6 +97,35 @@ button:disabled { opacity: .4; cursor: default; }
 footer { padding: 14px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
 </style>
 <script src="/static/htmx.min.js"></script>
+<script>
+// Keeps every "54s ago" on the page counting. The server writes the age in
+// seconds into data-age, and this adds the time since the element arrived.
+// Without it the text would only change when the list refreshes.
+(function () {
+  var arrived = new WeakMap();
+
+  function words(seconds) {
+    if (seconds < 60) return seconds + "s ago";
+    if (seconds < 3600) return Math.floor(seconds / 60) + "m " + (seconds % 60) + "s ago";
+    return Math.floor(seconds / 3600) + "h " + Math.floor((seconds % 3600) / 60) + "m ago";
+  }
+
+  function tick() {
+    document.querySelectorAll("[data-age]").forEach(function (el) {
+      if (!arrived.has(el)) arrived.set(el, performance.now());
+
+      var since = Math.floor((performance.now() - arrived.get(el)) / 1000);
+      el.textContent = words(Number(el.dataset.age) + since);
+    });
+  }
+
+  // Once a second, and as soon as new content arrives, so that an element is
+  // noticed when it shows up and not up to a second later.
+  setInterval(tick, 1000);
+  document.addEventListener("DOMContentLoaded", tick);
+  document.addEventListener("htmx:afterSwap", tick);
+})();
+</script>
 </head>
 <body>
 <main id="main" hx-target="#main" hx-swap="innerHTML">
@@ -119,7 +148,7 @@ footer { padding: 14px 0 0; color: var(--muted); font-size: 12px; text-align: ce
 <div id="list" hx-get="/prs" hx-trigger="every 10s" hx-target="this" hx-swap="outerHTML">
   {{/* The forms below name their own target. Without it they would inherit this element's and put the whole answer, header included, in place of the list. */}}
   {{if .FetchErr}}<div class="flash err">Could not reach GitHub: {{.FetchErr}}</div>{{end}}
-  <div class="meta"><span title="{{.Hint.Updated}}">Updated {{.Fetched}}</span>{{if .PRs}} · {{len .PRs}} PRs{{end}}</div>
+  <div class="meta"><span title="{{.Hint.Updated}}">Updated <span {{if ge .Fetched.Seconds 0}}data-age="{{.Fetched.Seconds}}"{{end}}>{{.Fetched.Text}}</span></span>{{if .PRs}} · {{len .PRs}} PRs{{end}}</div>
 
   {{range .PRs}}
   <article class="card">
@@ -207,7 +236,7 @@ footer { padding: 14px 0 0; color: var(--muted); font-size: 12px; text-align: ce
       <span class="badge {{.Badge.Tone}}" title="{{.Badge.Hint}}">{{.Badge.Text}}</span>
     </div>
     <div class="title">{{.Title}}</div>
-    <div class="marks"><span>{{.Ago}}</span></div>
+    <div class="marks"><span data-age="{{.Ago.Seconds}}">{{.Ago.Text}}</span></div>
   </article>
   {{end}}
   {{end}}

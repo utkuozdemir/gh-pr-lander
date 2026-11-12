@@ -86,6 +86,7 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
 		waitForResultsCmd(m.results),
+		ageTickCmd(),
 	)
 }
 
@@ -136,6 +137,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 
 		return m, cmd
+
+	case ageTickMsg:
+		// Nothing changes but the time. Returning redraws the view, and with it
+		// every "54s ago".
+		return m, ageTickCmd()
 
 	case delayedRefreshMsg:
 		m.triggerRefresh()

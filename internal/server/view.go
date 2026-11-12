@@ -23,7 +23,7 @@ type pageData struct {
 	Flash    flash
 	PRs      []prView
 	Gone     []goneView
-	Fetched  string
+	Fetched  age
 	FetchErr string
 }
 
@@ -109,14 +109,14 @@ type goneView struct {
 	Title  string
 	URL    string
 	Badge  mark
-	Ago    string
+	Ago    age
 }
 
 func (s *Server) snapshot() pageData {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	data := pageData{Fetched: "not yet", Version: s.state.Config.Version, Hint: pageHints}
+	data := pageData{Fetched: age{Text: "not yet", Seconds: -1}, Version: s.state.Config.Version, Hint: pageHints}
 
 	if !s.lastFetch.IsZero() {
 		data.Fetched = ago(s.lastFetch)
@@ -196,17 +196,31 @@ func (s *Server) snapshot() pageData {
 	return data
 }
 
-func ago(t time.Time) string {
-	d := time.Since(t)
+// age is how long ago something happened: in words for the page as it is
+// served, and in seconds for the page's script, which keeps the words counting
+// between refreshes. The script counts from the moment it received the
+// seconds, so the clocks of the server and the browser never have to agree.
+type age struct {
+	Text    string
+	Seconds int // negative when it has not happened yet
+}
+
+// ago words an age the same way the script in page.html does.
+func ago(t time.Time) age {
+	seconds := max(int(time.Since(t).Seconds()), 0)
+
+	var text string
 
 	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds ago", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case seconds < 60:
+		text = fmt.Sprintf("%ds ago", seconds)
+	case seconds < 3600:
+		text = fmt.Sprintf("%dm %ds ago", seconds/60, seconds%60)
 	default:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
+		text = fmt.Sprintf("%dh %dm ago", seconds/3600, seconds%3600/60)
 	}
+
+	return age{Text: text, Seconds: seconds}
 }
 
 func badge(status pr.OverallStatus) mark {
