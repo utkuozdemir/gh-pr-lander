@@ -161,7 +161,9 @@ footer { padding: 14px 0 0; color: var(--muted); font-size: 12px; text-align: ce
     <div class="title">{{.Title}}</div>
     <div class="marks">
       <span title="{{.Base.Hint}}">Base <span class="{{.Base.Tone}}">{{.Base.Text}}</span></span>
-      <span title="{{.CI.Hint}}">CI <span class="{{.CI.Tone}}">{{.CI.Text}}</span></span>
+      <span>CI <span class="{{.CI.Tone}}" title="{{.CI.Hint}}">{{.CI.Text}}</span>
+        {{- if .Reruns.Text}} · <span class="{{.Reruns.Tone}}" title="{{.Reruns.Hint}}">{{.Reruns.Text}}</span>{{end -}}
+      </span>
       <span title="{{.Review.Hint}}">Review <span class="{{.Review.Tone}}">{{.Review.Text}}</span></span>
       {{if or .Comments.Text .Notes.Text}}<span>Comments
         {{- if .Comments.Text}} <span class="{{.Comments.Tone}}" title="{{.Comments.Hint}}">{{.Comments.Text}}</span>{{end}}

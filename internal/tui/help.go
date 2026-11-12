@@ -56,6 +56,7 @@ var helpSections = []helpSection{
 		{"Base", hint.BaseBehind + " \"behind (not enforced)\": " + hint.BaseUnenforced},
 		{"CI", hint.Checks + " \"optional still running\": " + hint.ChecksOptional +
 			" \"workflow awaiting approval\": " + hint.ChecksUnapproved},
+		{"2 re-runs", hint.Reruns},
 		{"Review", hint.Review},
 		{"Comments", hint.CommentCount},
 		{"1 note", hint.Note},

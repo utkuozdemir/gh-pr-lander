@@ -260,3 +260,23 @@ func TestNewHeadCommitResetsAutorerunGiveUp(t *testing.T) {
 		t.Fatal("expected autorerun to try again on a new head commit")
 	}
 }
+
+func TestRerunsLabel(t *testing.T) {
+	p := readyPR("sha1")
+	m := testState(t, p)
+
+	for reruns, want := range map[int]string{0: "", 1: "1 re-run", 2: "2 re-runs"} {
+		p.Reruns = reruns
+		if got := m.RerunsLabel(p); got != want {
+			t.Fatalf("%d re-runs: expected %q, got %q", reruns, want, got)
+		}
+	}
+
+	// With autorerun on it reads as progress toward the limit.
+	m.AutoRerun[p.RepoShort()] = true
+	p.Reruns = 2
+
+	if got := m.RerunsLabel(p); got != "re-run 2 of 3" {
+		t.Fatalf("expected the count against the limit, got %q", got)
+	}
+}

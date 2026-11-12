@@ -38,7 +38,8 @@ and approving a contributor's workflows (`w`) is terminal only.
 
 What both show today: the PR list with base, CI, review with the approval
 count, resolved/total comments, the automerge and autorerun switches, the
-automerge conditions and what automerge waits for, give-up states, recently
+automerge conditions and what automerge waits for, the re-run count, notes,
+give-up states, recently
 merged PRs, the PR count, refresh, the running version (terminal header, page
 footer), and an explanation of every control and status (hover text on the
 page, the `?` help view in the terminal app, both from `internal/hint`).
@@ -531,6 +532,30 @@ there is genuinely nothing to re-run. `WorkflowSummary.Running` /
 "workflow still running" instead of the misleading "no failed GitHub Actions
 jobs". Autorerun needs nothing special: `shouldAutoRerun` already waits for
 `FailedWorkflowRuns > 0`, which only becomes true once the run completes.
+
+## The re-run count
+
+Both front ends show how often the checks of a PR's head commit were re-run,
+right after the check summary: `CI 1/32 failed · 2 re-runs`, or `re-run 2 of
+3` while autorerun is on, since then the limit (`--auto-max-retries`) is what
+the owner wants to see. `State.RerunsLabel` words it for both.
+
+- **It is GitHub's own number**, not a counter of the tool: the highest
+  `run_attempt` among the commit's workflow runs, minus the first run
+  (`WorkflowSummary.Reruns`, `pr.PR.Reruns`). So it counts re-runs by anyone
+  (autorerun, either front end, GitHub's page), is the same in both front
+  ends, and survives a restart. A tool-side counter would have none of that.
+- **It belongs to the commit** and starts over with a new one, like
+  autorerun's limit.
+- **It stays visible after the checks pass**, which is how a PR that hit a
+  flaky test shows.
+- **Cost.** The attempt number is only in the Actions REST API, one request
+  per PR. `annotateWorkflowRuns` used to ask only for failed PRs. It now also
+  asks for a commit that failed at least once (`rerunWatch`, in memory in the
+  client) until the commit is replaced, so the count is known while the
+  re-run runs and after it passed. A commit that passed first time is never
+  asked about. A re-run that started and finished green between two polls,
+  on a commit the tool never saw failed, is not counted.
 
 ## Autorebase queue
 

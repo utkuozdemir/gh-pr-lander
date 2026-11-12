@@ -32,6 +32,10 @@ _Avoid_: informative comment, self comment
 An extra requirement the owner sets on one pull request's automerge, on top of ready: a minimum number of approvals, or no unresolved comments. It is set before automerge is turned on and stays with the pull request. It holds back automerge only, never a merge the owner starts.
 _Avoid_: merge rule, gate
 
+**Re-run**:
+Running the failed jobs of a commit's checks again. The re-run count of a pull request is how often that happened for its latest commit, whoever started it, and starts over with a new commit.
+_Avoid_: retry, rerun attempt
+
 **Terminal app**:
 The tool as run on the owner's own machine, where signing is possible. It works on its own, with no server.
 

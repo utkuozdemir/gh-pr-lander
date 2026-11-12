@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -32,6 +33,7 @@ type Client struct {
 	httpClient *http.Client
 	username   string // cached authenticated user login
 	notes      notesCache
+	reruns     rerunWatch
 }
 
 // New constructs a Client with the given token.
@@ -244,9 +246,22 @@ func (c *Client) annotateWorkflowRuns(ctx context.Context, prs []pr.PR) error {
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(annotateConcurrency)
 
+	listed := make(map[string]bool, len(prs))
+
 	for i := range prs {
+		key := prs[i].RepoShort()
+		listed[key] = true
+
+		// A commit that failed once is asked about until it is replaced, so
+		// that its re-run count stays known while the re-run is running and
+		// after it passed. A commit that passed first time is never asked about.
+		if prs[i].CIStatus == pr.CIFailed {
+			c.reruns.watch(key, prs[i].HeadSHA)
+		}
+
 		blocked := prs[i].MergeBlocked && prs[i].OverallStatus == pr.StatusBlocked
-		if prs[i].HeadSHA == "" || (prs[i].CIStatus != pr.CIFailed && !blocked) {
+		if prs[i].HeadSHA == "" ||
+			(prs[i].CIStatus != pr.CIFailed && !blocked && !c.reruns.watched(key, prs[i].HeadSHA)) {
 			continue
 		}
 
@@ -264,12 +279,54 @@ func (c *Client) annotateWorkflowRuns(ctx context.Context, prs []pr.PR) error {
 			prs[i].LatestFailedRunUpdate = summary.LatestUpdatedAt
 			prs[i].RunningWorkflowRuns = summary.Running
 			prs[i].AwaitingApprovalRuns = summary.AwaitingApproval
+			prs[i].Reruns = summary.Reruns
 
 			return nil
 		})
 	}
 
-	return g.Wait()
+	err := g.Wait()
+
+	c.reruns.keep(listed)
+
+	return err
+}
+
+// rerunWatch remembers which commits failed at least once, by PR. See
+// annotateWorkflowRuns.
+type rerunWatch struct {
+	mu   sync.Mutex
+	shas map[string]string
+}
+
+func (w *rerunWatch) watch(key, sha string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.shas == nil {
+		w.shas = make(map[string]string)
+	}
+
+	w.shas[key] = sha
+}
+
+func (w *rerunWatch) watched(key, sha string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	return sha != "" && w.shas[key] == sha
+}
+
+// keep drops the PRs that are no longer listed.
+func (w *rerunWatch) keep(listed map[string]bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	for key := range w.shas {
+		if !listed[key] {
+			delete(w.shas, key)
+		}
+	}
 }
 
 // ErrNotFastForward is returned by FastForwardMerge when the base branch has
@@ -350,6 +407,8 @@ func (c *Client) FailedWorkflowRunsSummary(
 	var summary WorkflowSummary
 
 	for _, run := range runs {
+		summary.Reruns = max(summary.Reruns, run.RunAttempt-1)
+
 		if run.Status != "completed" {
 			summary.Running++
 		}

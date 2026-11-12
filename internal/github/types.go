@@ -135,8 +135,11 @@ type authorNode struct {
 
 // WorkflowSummary aggregates the failed GitHub Actions runs for a head SHA.
 type WorkflowSummary struct {
-	Count           int
-	MaxAttempt      int
+	Count      int
+	MaxAttempt int
+	// Reruns is how many times the most re-run workflow of the commit was run
+	// again, failed or not: its attempt number minus the first run.
+	Reruns          int
 	LatestUpdatedAt time.Time
 	// Running counts runs that have not completed yet. A run with a failed job
 	// has no conclusion until all its other jobs finish, and only then can its

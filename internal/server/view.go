@@ -87,6 +87,8 @@ type prView struct {
 	Base   mark
 	CI     mark
 	Review mark
+	// Reruns is how often the checks of the head commit were re-run.
+	Reruns mark
 	// Notes is the owner's notes on the PR, which are left out of Comments.
 	Notes mark
 	// Comments is the resolved and total review comment threads, empty when
@@ -161,6 +163,10 @@ func (s *Server) snapshot() pageData {
 			if p.UnresolvedThreads() > 0 {
 				v.Comments.Tone = toneWarn
 			}
+		}
+
+		if reruns := s.state.RerunsLabel(p); reruns != "" {
+			v.Reruns = mark{reruns, toneNone, hint.Reruns}
 		}
 
 		if p.Notes > 0 {

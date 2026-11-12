@@ -509,3 +509,19 @@ func TestPageShowsNotesNextToTheCommentCount(t *testing.T) {
 		t.Fatalf("expected the count and the notes on the page, got %q", body)
 	}
 }
+
+func TestPageShowsTheRerunCount(t *testing.T) {
+	p := readyPR(1, "aaa")
+	p.Reruns = 2
+
+	s, _ := testServer(t, p, readyPR(2, "bbb"))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/prs", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	body := strings.Join(strings.Fields(rec.Body.String()), " ")
+	if strings.Count(body, "re-runs</span>") != 1 || !strings.Contains(body, ">2 re-runs</span>") {
+		t.Fatalf("expected the count on the one PR that was re-run, got %q", body)
+	}
+}

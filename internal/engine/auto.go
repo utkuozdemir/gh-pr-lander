@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
@@ -68,6 +69,22 @@ func (s *State) shouldAutoRerun(p pr.PR) bool {
 	last := s.LastAutoRerun[key]
 
 	return last.IsZero() || time.Since(last) >= s.Config.AutoCooldown
+}
+
+// RerunsLabel words how often the checks of the PR's head commit were re-run:
+// "2 re-runs", or "re-run 2 of 3" while autorerun is on and counting toward
+// its limit. Empty when they never were.
+func (s *State) RerunsLabel(p pr.PR) string {
+	switch {
+	case p.Reruns <= 0:
+		return ""
+	case s.AutoRerun[p.RepoShort()]:
+		return fmt.Sprintf("re-run %d of %d", p.Reruns, s.Config.AutoMaxRetries)
+	case p.Reruns == 1:
+		return "1 re-run"
+	default:
+		return fmt.Sprintf("%d re-runs", p.Reruns)
+	}
 }
 
 // AutorerunWillHandle reports whether autorerun is going to re-run the PR's

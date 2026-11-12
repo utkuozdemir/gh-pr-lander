@@ -129,6 +129,9 @@ type PR struct {
 	// TakenOverFrom is the original author's login when the PR was opened by
 	// someone else and the user committed to it. Empty for the user's own PRs.
 	TakenOverFrom string
+	// Reruns is how many times the checks of the head commit were re-run, by
+	// anyone. Known once the commit has failed at least once.
+	Reruns int
 	// FailedWorkflowRuns* is populated from the Actions REST API for failed PRs.
 	FailedWorkflowRunsKnown bool
 	FailedWorkflowRuns      int

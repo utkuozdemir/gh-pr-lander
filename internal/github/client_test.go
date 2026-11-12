@@ -661,3 +661,57 @@ func TestAnnotateNotesCountsThreadsOnlyTheUserWrote(t *testing.T) {
 		t.Fatalf("expected a new lookup for a changed PR, got %d lookups, %v", requests, err)
 	}
 }
+
+// A commit that failed once is asked about until it is replaced, so that its
+// re-run count is known while the re-run runs and after it passed. A commit
+// that passed first time is never asked about.
+func TestAnnotateWorkflowRunsKeepsTheRerunCountAfterAFailure(t *testing.T) {
+	requests := 0
+	client := &Client{
+		token: "token",
+		httpClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			requests++
+			// The most re-run workflow is on its third attempt, and it is not
+			// the failed one.
+			body := `{"workflow_runs":[` +
+				`{"id":1,"status":"completed","conclusion":"failure","run_attempt":2},` +
+				`{"id":2,"status":"in_progress","conclusion":null,"run_attempt":3}]}`
+
+			return testJSONResponse(body, nil), nil
+		})},
+	}
+
+	annotate := func(ci pr.CIStatus, sha string) pr.PR {
+		prs := []pr.PR{
+			{Repo: "org/repo", Number: 1, HeadSHA: sha, CIStatus: ci},
+			{Repo: "org/repo", Number: 2, HeadSHA: "other", CIStatus: pr.CIRunning}, // never failed
+		}
+		if err := client.annotateWorkflowRuns(context.Background(), prs); err != nil {
+			t.Fatal(err)
+		}
+
+		if prs[1].Reruns != 0 {
+			t.Fatalf("expected no count for a commit that never failed, got %d", prs[1].Reruns)
+		}
+
+		return prs[0]
+	}
+
+	if got := annotate(pr.CIFailed, "aaa"); got.Reruns != 2 || requests != 1 {
+		t.Fatalf("expected 2 re-runs after one lookup, got %d after %d", got.Reruns, requests)
+	}
+
+	// The re-run is running, then passed: still asked about.
+	if got := annotate(pr.CIRunning, "aaa"); got.Reruns != 2 || requests != 2 {
+		t.Fatalf("expected the count while the re-run runs, got %d after %d lookups", got.Reruns, requests)
+	}
+
+	if got := annotate(pr.CIPassed, "aaa"); got.Reruns != 2 || requests != 3 {
+		t.Fatalf("expected the count after it passed, got %d after %d lookups", got.Reruns, requests)
+	}
+
+	// A new commit starts over, and is not asked about until it fails.
+	if got := annotate(pr.CIRunning, "bbb"); got.Reruns != 0 || requests != 3 {
+		t.Fatalf("expected no count and no lookup for a new commit, got %d after %d lookups", got.Reruns, requests)
+	}
+}

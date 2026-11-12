@@ -151,6 +151,11 @@ func (m model) renderActivePR(p pr.PR, selected bool) string {
 
 	base := "Base " + baseIndicator(p)
 	ci := "CI " + ciIndicator(p)
+
+	if reruns := m.RerunsLabel(p); reruns != "" {
+		ci += " · " + indicatorNone.Render(reruns)
+	}
+
 	review := "Review " + reviewIndicator(p)
 	auto := m.autoIndicators(p)
 

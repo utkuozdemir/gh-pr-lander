@@ -568,3 +568,24 @@ func TestRowShowsNotesNextToTheCommentCount(t *testing.T) {
 		t.Fatalf("expected only the notes, got %q", row)
 	}
 }
+
+func TestRowShowsTheRerunCount(t *testing.T) {
+	m := model{State: &engine.State{AutoRerun: map[string]bool{}, Config: config.Config{AutoMaxRetries: 3}}, width: 120}
+	p := pr.PR{Repo: "org/repo", Number: 1, CIStatus: pr.CIFailed, Reruns: 2}
+
+	if row := m.renderActivePR(p, false); !strings.Contains(row, "2 re-runs") {
+		t.Fatalf("expected the count next to CI, got %q", row)
+	}
+
+	m.AutoRerun["org/repo#1"] = true
+
+	if row := m.renderActivePR(p, false); !strings.Contains(row, "re-run 2 of 3") {
+		t.Fatalf("expected the count against the limit, got %q", row)
+	}
+
+	p.Reruns = 0
+
+	if row := m.renderActivePR(p, false); strings.Contains(row, "re-run") {
+		t.Fatalf("expected nothing for a commit that was never re-run, got %q", row)
+	}
+}
