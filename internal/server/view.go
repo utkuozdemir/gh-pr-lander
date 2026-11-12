@@ -17,6 +17,7 @@ type flash struct {
 }
 
 type pageData struct {
+	Version  string
 	Flash    flash
 	PRs      []prView
 	Gone     []goneView
@@ -79,7 +80,7 @@ func (s *Server) snapshot() pageData {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	data := pageData{Fetched: "not yet"}
+	data := pageData{Fetched: "not yet", Version: s.state.Config.Version}
 
 	if !s.lastFetch.IsZero() {
 		data.Fetched = ago(s.lastFetch)

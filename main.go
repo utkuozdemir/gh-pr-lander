@@ -32,8 +32,14 @@ import (
 
 func main() {
 	run, args := runTerminal, os.Args[1:]
-	if len(args) > 0 && args[0] == "serve" {
+
+	switch {
+	case len(args) > 0 && args[0] == "serve":
 		run, args = runServer, args[1:]
+	case len(args) > 0 && args[0] == "version":
+		fmt.Println(buildVersion()) //nolint:forbidigo // the one thing this command is for
+
+		return
 	}
 
 	if err := run(args); err != nil {
@@ -53,7 +59,17 @@ func runTerminal(args []string) error {
 		defer func() { _ = logFile.Close() }()
 	}
 
-	slog.Info("starting gh-pr-lander", "orgs", cfg.Orgs, "poll_interval", cfg.PollInterval, "data_dir", cfg.DataDir)
+	slog.Info(
+		"starting gh-pr-lander",
+		"version",
+		cfg.Version,
+		"orgs",
+		cfg.Orgs,
+		"poll_interval",
+		cfg.PollInterval,
+		"data_dir",
+		cfg.DataDir,
+	)
 
 	notify.SetEnabled(cfg.Notifications)
 
@@ -195,6 +211,7 @@ func parseFlags(args []string, serve bool) (config.Config, serveOptions) {
 	}
 
 	return config.Config{
+		Version:               buildVersion(),
 		Orgs:                  parsedOrgs,
 		PollInterval:          pollInterval,
 		DataDir:               dataDir,

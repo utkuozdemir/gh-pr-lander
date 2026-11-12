@@ -24,7 +24,7 @@ body {
   margin: 0; background: var(--bg); color: var(--text);
   font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-main { max-width: 760px; margin: 0 auto; padding: 12px 16px 40px; }
+main { max-width: 760px; margin: 0 auto; padding: 12px 16px 24px; }
 header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0 12px; }
 h1 { font-size: 18px; margin: 0; display: flex; align-items: center; gap: 8px; }
 h2 { font-size: 13px; margin: 24px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
@@ -87,6 +87,7 @@ button[aria-pressed="true"] { background: var(--on); border-color: var(--on); co
 button.go { border-color: var(--ok); color: var(--ok); font-weight: 600; }
 button:disabled { opacity: .4; cursor: default; }
 .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--muted); font-size: 12px; text-align: center; }
 </style>
 <script src="/static/htmx.min.js"></script>
 </head>
@@ -94,6 +95,7 @@ button:disabled { opacity: .4; cursor: default; }
 <main id="main" hx-target="#main" hx-swap="innerHTML">
 {{template "main" .}}
 </main>
+<footer>gh-pr-lander {{.Version}}</footer>
 </body>
 </html>
 {{end}}

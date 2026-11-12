@@ -327,3 +327,19 @@ func TestHealthzAnswersWithoutThePage(t *testing.T) {
 		t.Fatalf("expected a short ok, got %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+func TestPageShowsTheRunningVersion(t *testing.T) {
+	s, _ := testServer(t)
+
+	s.mu.Lock()
+	s.state.Config.Version = "v1.2.3 (abc1234)"
+	s.mu.Unlock()
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	if !strings.Contains(rec.Body.String(), "gh-pr-lander v1.2.3 (abc1234)") {
+		t.Fatal("expected the page to show which version is running")
+	}
+}

@@ -218,6 +218,14 @@ Three things to know when changing the page:
 - **Refresh waits for the fetch it asked for** (`Server.fetched`, a channel
   closed and replaced on every fetch result) and answers with the fresh list.
 
+The page footer and the startup log say which build is running
+(`buildVersion` in `version.go`, passed along as `Config.Version`). A release
+image gets it through `-ldflags -X main.version/-X main.commit` from the
+`VERSION` and `COMMIT` build args the tag workflow sets, because the Docker
+build context has no `.git`. Any other build falls back to what the Go
+toolchain recorded: the module version for `go install module@vX`, else the
+commit, plus "modified" for a changed checkout.
+
 `GET /healthz` is for probes. The kubelet reads only the first 10KB of a
 probe answer and then closes the connection. Once the page grew past that
 (v0.6.0), every probe of `/` logged "failed to render the page ... broken

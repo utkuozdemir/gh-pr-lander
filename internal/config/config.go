@@ -7,6 +7,8 @@ import "time"
 // startup (see package main) and passed by value into the components that
 // need it. Every field has a sensible default applied before construction.
 type Config struct {
+	// Version says which build is running, for the page and the log.
+	Version               string
 	Orgs                  []string
 	PollInterval          time.Duration
 	DataDir               string

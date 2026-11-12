@@ -59,8 +59,21 @@ func runServer(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	slog.Info("starting server", "user", client.Username(), "orgs", cfg.Orgs, "listen", opts.listen,
-		"poll_interval", cfg.PollInterval, "data_dir", cfg.DataDir)
+	slog.Info(
+		"starting server",
+		"version",
+		cfg.Version,
+		"user",
+		client.Username(),
+		"orgs",
+		cfg.Orgs,
+		"listen",
+		opts.listen,
+		"poll_interval",
+		cfg.PollInterval,
+		"data_dir",
+		cfg.DataDir,
+	)
 
 	g, gctx := errgroup.WithContext(ctx)
 

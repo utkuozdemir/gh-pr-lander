@@ -63,6 +63,8 @@ go install github.com/utkuozdemir/gh-pr-lander@latest
 gh-pr-lander
 ```
 
+`gh-pr-lander version` prints which build it is, and the server shows the same at the bottom of its page.
+
 Or `go run .` from source. All settings have defaults, `--help` for the full list:
 
 ```
