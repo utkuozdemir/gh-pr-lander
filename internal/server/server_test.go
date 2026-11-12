@@ -315,3 +315,15 @@ func TestReviewMarkShowsApprovalsInEveryState(t *testing.T) {
 		t.Fatalf("expected %q with no approvals, got %q", "none", got)
 	}
 }
+
+func TestHealthzAnswersWithoutThePage(t *testing.T) {
+	s, _ := testServer(t, readyPR(1, "aaa"))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || rec.Body.String() != "ok\n" {
+		t.Fatalf("expected a short ok, got %d %q", rec.Code, rec.Body.String())
+	}
+}

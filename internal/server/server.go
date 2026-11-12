@@ -174,6 +174,12 @@ func (s *Server) refreshSoon() {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
+	// For health probes. The page itself is the wrong target: a prober such as
+	// the kubelet reads only the first 10KB of an answer and then hangs up,
+	// which shows up as a failed write for every probe once the page is larger.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok\n"))
+	})
 	mux.HandleFunc("GET /{$}", s.handlePage)
 	mux.HandleFunc("GET /prs", s.handleList)
 	mux.HandleFunc("POST /toggle", s.handleToggle)

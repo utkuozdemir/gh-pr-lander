@@ -218,6 +218,11 @@ Three things to know when changing the page:
 - **Refresh waits for the fetch it asked for** (`Server.fetched`, a channel
   closed and replaced on every fetch result) and answers with the fresh list.
 
+`GET /healthz` is for probes. The kubelet reads only the first 10KB of a
+probe answer and then closes the connection. Once the page grew past that
+(v0.6.0), every probe of `/` logged "failed to render the page ... broken
+pipe", twice every 10 seconds.
+
 Only `POST` requests are logged (`logActions`), since the page polls every
 10s. `static/favicon.svg` is the project logo: the favicon, the mark in the
 page header and the image at the top of the README all use that one file.

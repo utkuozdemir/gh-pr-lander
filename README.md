@@ -111,6 +111,8 @@ The page lists your PRs with their status. Per PR you can switch automerge and a
 - **Only your own PRs:** a PR you took over from someone else is left to the terminal app, since its author can still push to it.
 - **Side by side with the terminal app:** both work on their own and keep their own switches. If both have automerge on for one PR, the second merge attempt changes nothing.
 
+`GET /healthz` answers a short `ok` for liveness and readiness probes. Point probes there and not at the page, which is larger than the 10KB a Kubernetes probe reads.
+
 A container image is published as `ghcr.io/utkuozdemir/gh-pr-lander` for each version tag. In a deployment, name the organizations to watch with `--orgs`. Its entrypoint is the binary, so pass `serve` and the flags as arguments.
 
 ## Git identity and signing
