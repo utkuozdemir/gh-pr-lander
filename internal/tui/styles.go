@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 
@@ -184,12 +185,23 @@ func ciIndicator(p pr.PR) string {
 // threadsIndicator shows resolved/total inline comment threads, in the warning
 // color while any are unresolved, so merging over open comments stands out.
 func threadsIndicator(p pr.PR) string {
-	counts := fmt.Sprintf("%d/%d", p.ResolvedReviewThreads, p.ReviewThreads)
-	if p.ResolvedReviewThreads < p.ReviewThreads {
-		return indicatorWarn.Render("◯ " + counts)
+	var parts []string
+
+	if p.CommentThreads() > 0 {
+		counts := fmt.Sprintf("%d/%d", p.ResolvedReviewThreads, p.CommentThreads())
+		if p.UnresolvedThreads() > 0 {
+			parts = append(parts, indicatorWarn.Render("◯ "+counts))
+		} else {
+			parts = append(parts, indicatorPass.Render("✓ "+counts))
+		}
 	}
 
-	return indicatorPass.Render("✓ " + counts)
+	// The owner's notes are not part of the count, they ask for nothing.
+	if p.Notes > 0 {
+		parts = append(parts, indicatorNone.Render(p.NotesLabel()))
+	}
+
+	return strings.Join(parts, " · ")
 }
 
 // reviewIndicator shows the review state, with the number of approvals behind

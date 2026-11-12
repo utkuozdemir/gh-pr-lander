@@ -31,6 +31,7 @@ type Client struct {
 	token      string
 	httpClient *http.Client
 	username   string // cached authenticated user login
+	notes      notesCache
 }
 
 // New constructs a Client with the given token.
@@ -165,6 +166,10 @@ func (c *Client) FetchPRs(ctx context.Context, orgs []string) ([]pr.PR, error) {
 	}
 
 	if err := c.annotateWorkflowRuns(ctx, prs); err != nil {
+		return nil, err
+	}
+
+	if err := c.annotateNotes(ctx, prs); err != nil {
 		return nil, err
 	}
 

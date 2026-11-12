@@ -435,6 +435,18 @@ no unresolved review comment. `internal/engine/conditions.go` holds them
 - **Unresolved** means not marked resolved, outdated or not, which is how
   GitHub's own "require conversation resolution" rule counts. Threads past the
   first 100 count as unresolved.
+- **A note is not an unresolved comment.** A note is a thread the owner
+  started on their own PR that nobody else replied to: information for the
+  reviewers, which must stay visible, so resolving it (GitHub then collapses
+  it) is not an option. Notes never hold back automerge, with no setting for
+  it, and they are left out of the comment count. Both front ends show them
+  next to it: `Comments 1/1 resolved · 1 note`. A reply from anyone else
+  turns the note back into an unresolved comment. See `internal/github/notes.go`:
+  who wrote a thread's comments cannot be asked in the search (cost 25
+  instead of 1 for 25 PRs times 100 threads), so `annotateNotes` asks per PR
+  (cost 1), only for the owner's own PRs with unresolved threads, and keeps
+  the answer until the PR's `updatedAt` or thread counts change. A failed
+  lookup counts the threads as unresolved.
 - **No notification while a condition holds automerge back.** "Ready to merge"
   is already quiet when automerge is on, and it stays that way.
 - **The terminal app and the server each have their own conditions**, like

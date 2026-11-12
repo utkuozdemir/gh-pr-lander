@@ -46,6 +46,8 @@ func prFromNode(node prNode) pr.PR {
 		}
 	}
 
+	p.UpdatedAt = node.UpdatedAt
+
 	// Each person with write access counts once, by their latest review.
 	for _, review := range node.LatestReviews.Nodes {
 		if strings.EqualFold(review.State, "APPROVED") {

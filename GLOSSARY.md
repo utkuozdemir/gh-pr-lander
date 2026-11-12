@@ -21,8 +21,12 @@ A person with write access to the repository whose latest review of the pull req
 _Avoid_: review, LGTM, approving review
 
 **Unresolved comment**:
-A review comment thread that nobody has marked as resolved, whether or not the code under it has changed since.
+A review comment thread that nobody has marked as resolved, whether or not the code under it has changed since. A note is not one.
 _Avoid_: open thread, outdated comment
+
+**Note**:
+A review comment thread the owner started on their own pull request that nobody else has replied to. It tells reviewers something and asks for nothing, so it never holds back automerge. Once someone else replies, it is an unresolved comment.
+_Avoid_: informative comment, self comment
 
 **Automerge condition**:
 An extra requirement the owner sets on one pull request's automerge, on top of ready: a minimum number of approvals, or no unresolved comments. It is set before automerge is turned on and stays with the pull request. It holds back automerge only, never a merge the owner starts.

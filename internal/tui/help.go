@@ -58,6 +58,7 @@ var helpSections = []helpSection{
 			" \"workflow awaiting approval\": " + hint.ChecksUnapproved},
 		{"Review", hint.Review},
 		{"Comments", hint.CommentCount},
+		{"1 note", hint.Note},
 		{"⇄ @author", hint.TakenOver},
 		{"▶ 1/3", hint.QueueActive},
 		{"⏳ 2/3", hint.QueueWaiting},

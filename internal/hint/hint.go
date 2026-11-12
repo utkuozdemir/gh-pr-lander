@@ -54,6 +54,7 @@ const (
 	ChecksUnapproved = "A workflow waits for a maintainer to approve it before it runs."
 	Review           = "The review state. The number in parentheses is how many people approved."
 	CommentCount     = "Resolved review comments, out of all of them."
+	Note             = "A comment of yours that nobody replied to. It does not hold back automerge."
 	TakenOver        = "Opened by someone else. You committed to it, so it is listed here."
 	QueueActive      = "This pull request holds its autorebase queue. The ones behind it wait for it to merge."
 	QueueWaiting     = "Its place in the autorebase queue. It is rebased when the ones before it are merged."

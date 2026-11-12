@@ -87,6 +87,8 @@ type prView struct {
 	Base   mark
 	CI     mark
 	Review mark
+	// Notes is the owner's notes on the PR, which are left out of Comments.
+	Notes mark
 	// Comments is the resolved and total review comment threads, empty when
 	// the PR has none.
 	Comments mark
@@ -152,13 +154,17 @@ func (s *Server) snapshot() pageData {
 			CanRerun:     p.CIStatus == pr.CIFailed,
 		}
 
-		if p.ReviewThreads > 0 {
+		if p.CommentThreads() > 0 {
 			v.Comments = mark{
-				fmt.Sprintf("%d/%d resolved", p.ResolvedReviewThreads, p.ReviewThreads), toneOk, hint.CommentCount,
+				fmt.Sprintf("%d/%d resolved", p.ResolvedReviewThreads, p.CommentThreads()), toneOk, hint.CommentCount,
 			}
 			if p.UnresolvedThreads() > 0 {
 				v.Comments.Tone = toneWarn
 			}
+		}
+
+		if p.Notes > 0 {
+			v.Notes = mark{p.NotesLabel(), toneNone, hint.Note}
 		}
 
 		if v.AutoMerge {

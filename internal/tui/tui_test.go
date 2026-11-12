@@ -553,3 +553,18 @@ func TestAgeTickKeepsItselfGoing(t *testing.T) {
 		t.Fatal("expected the tick to schedule the next one")
 	}
 }
+
+func TestRowShowsNotesNextToTheCommentCount(t *testing.T) {
+	m := model{State: &engine.State{}, width: 120}
+
+	p := pr.PR{Repo: "org/repo", Number: 1, ReviewThreads: 2, ResolvedReviewThreads: 1, Notes: 1}
+	if row := m.renderActivePR(p, false); !strings.Contains(row, "✓ 1/1") || !strings.Contains(row, "1 note") {
+		t.Fatalf("expected a resolved count and one note, got %q", row)
+	}
+
+	p = pr.PR{Repo: "org/repo", Number: 1, ReviewThreads: 2, Notes: 2}
+	if row := m.renderActivePR(p, false); !strings.Contains(row, "Comments") || !strings.Contains(row, "2 notes") ||
+		strings.Contains(row, "0/0") {
+		t.Fatalf("expected only the notes, got %q", row)
+	}
+}

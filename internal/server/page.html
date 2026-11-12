@@ -163,7 +163,11 @@ footer { padding: 14px 0 0; color: var(--muted); font-size: 12px; text-align: ce
       <span title="{{.Base.Hint}}">Base <span class="{{.Base.Tone}}">{{.Base.Text}}</span></span>
       <span title="{{.CI.Hint}}">CI <span class="{{.CI.Tone}}">{{.CI.Text}}</span></span>
       <span title="{{.Review.Hint}}">Review <span class="{{.Review.Tone}}">{{.Review.Text}}</span></span>
-      {{if .Comments.Text}}<span title="{{.Comments.Hint}}">Comments <span class="{{.Comments.Tone}}">{{.Comments.Text}}</span></span>{{end}}
+      {{if or .Comments.Text .Notes.Text}}<span>Comments
+        {{- if .Comments.Text}} <span class="{{.Comments.Tone}}" title="{{.Comments.Hint}}">{{.Comments.Text}}</span>{{end}}
+        {{- if and .Comments.Text .Notes.Text}} ·{{end}}
+        {{- if .Notes.Text}} <span class="{{.Notes.Tone}}" title="{{.Notes.Hint}}">{{.Notes.Text}}</span>{{end -}}
+      </span>{{end}}
     </div>
     <div class="actions">
       <div class="auto">

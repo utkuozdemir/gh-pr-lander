@@ -41,6 +41,7 @@ type prNode struct {
 	Mergeable        string     `json:"mergeable"`
 	MergeStateStatus string     `json:"mergeStateStatus"`
 	ReviewDecision   string     `json:"reviewDecision"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
 	Author           authorNode `json:"author"`
 	Repository       repoNode   `json:"repository"`
 	HeadRef          refNode    `json:"headRef"`
@@ -178,6 +179,7 @@ const prQuery = `query($query: String!, $after: String) {
         id
         number
         title
+        updatedAt
         url
         state
         isDraft

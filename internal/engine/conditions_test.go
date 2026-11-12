@@ -121,3 +121,25 @@ func TestConditionsAreSetBeforeAutomergeAndStayWithThePR(t *testing.T) {
 		t.Fatalf("expected the condition to be saved, got %v", reloaded.MinApprovals)
 	}
 }
+
+// A note of the owner asks for nothing, so "comments resolved" does not wait
+// for it.
+func TestNotesDoNotHoldBackAutomerge(t *testing.T) {
+	p := readyPR("sha1")
+	p.ReviewThreads, p.Notes = 2, 1
+	key := p.RepoShort()
+
+	m := testState(t, p)
+	m.AutoMerge[key] = true
+	m.ResolvedOnly[key] = true
+
+	if got := m.AutomergeWaitsFor(p); len(got) != 1 || got[0] != "1 unresolved comment" {
+		t.Fatalf("expected automerge to wait for the one real comment, got %v", got)
+	}
+
+	p.ResolvedReviewThreads = 1
+
+	if !m.shouldAutoMerge(p) {
+		t.Fatal("expected automerge to merge with only a note left open")
+	}
+}

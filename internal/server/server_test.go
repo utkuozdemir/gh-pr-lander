@@ -479,3 +479,33 @@ func TestPageOffersAnIconForIOS(t *testing.T) {
 		}
 	}
 }
+
+func TestPageShowsNotesNextToTheCommentCount(t *testing.T) {
+	both := readyPR(1, "aaa")
+	both.ReviewThreads, both.ResolvedReviewThreads, both.Notes = 2, 1, 1
+
+	onlyNotes := readyPR(2, "bbb")
+	onlyNotes.ReviewThreads, onlyNotes.Notes = 2, 2
+
+	s, _ := testServer(t, both, onlyNotes)
+
+	data := s.snapshot()
+	if got := data.PRs[0]; got.Comments.Text != "1/1 resolved" || got.Comments.Tone != toneOk ||
+		got.Notes.Text != "1 note" {
+		t.Fatalf("expected a green 1/1 and one note, got %+v and %+v", got.Comments, got.Notes)
+	}
+
+	if got := data.PRs[1]; got.Comments.Text != "" || got.Notes.Text != "2 notes" {
+		t.Fatalf("expected only the notes, got %+v and %+v", got.Comments, got.Notes)
+	}
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/prs", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	body := strings.Join(strings.Fields(rec.Body.String()), " ")
+	if !strings.Contains(body, `1/1 resolved</span> · <span class="none"`) ||
+		!strings.Contains(body, ">2 notes</span>") {
+		t.Fatalf("expected the count and the notes on the page, got %q", body)
+	}
+}

@@ -582,3 +582,82 @@ func TestPRFromNodeCountsApprovals(t *testing.T) {
 		t.Fatalf("expected 2 approvals, got %d", p.Approvals)
 	}
 }
+
+func TestAnnotateNotesCountsThreadsOnlyTheUserWrote(t *testing.T) {
+	thread := func(resolved bool, total int, authors ...string) string {
+		nodes := make([]string, len(authors))
+		for i, a := range authors {
+			nodes[i] = `{"author":{"login":"` + a + `"}}`
+		}
+
+		return `{"isResolved":` + boolJSON(resolved) + `,"comments":{"totalCount":` + strconv.Itoa(total) +
+			`,"nodes":[` + strings.Join(nodes, ",") + `]}}`
+	}
+
+	body := `{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[` + strings.Join([]string{
+		thread(false, 1, "me"),             // a note
+		thread(false, 2, "me", "Me"),       // still only the user, a note
+		thread(false, 2, "me", "reviewer"), // someone replied, a conversation
+		thread(false, 1, "reviewer"),       // a review comment
+		thread(true, 1, "me"),              // resolved, not counted at all
+		thread(false, 30, "me"),            // longer than what was looked at
+	}, ",") + `]}}}}}`
+
+	requests := 0
+	client := &Client{
+		token:    "token",
+		username: "me",
+		httpClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			requests++
+
+			return testJSONResponse(body, nil), nil
+		})},
+	}
+
+	own := pr.PR{
+		Repo:                  "org/repo",
+		RepoOwner:             "org",
+		RepoName:              "repo",
+		Number:                1,
+		ReviewThreads:         6,
+		ResolvedReviewThreads: 1,
+	}
+	theirs := own
+	theirs.Number, theirs.TakenOverFrom = 2, "someone"
+	resolved := own
+	resolved.Number, resolved.ResolvedReviewThreads = 3, 6
+
+	prs := []pr.PR{own, theirs, resolved}
+	if err := client.annotateNotes(context.Background(), prs); err != nil {
+		t.Fatal(err)
+	}
+
+	if prs[0].Notes != 2 || prs[0].UnresolvedThreads() != 3 || prs[0].CommentThreads() != 4 {
+		t.Fatalf("expected 2 notes and 3 unresolved of 4 comments, got %d, %d of %d",
+			prs[0].Notes, prs[0].UnresolvedThreads(), prs[0].CommentThreads())
+	}
+
+	// Someone else's PR and a PR with nothing unresolved are not asked about.
+	if prs[1].Notes != 0 || prs[2].Notes != 0 || requests != 1 {
+		t.Fatalf("expected one lookup and no notes elsewhere, got %d lookups, %d and %d notes",
+			requests, prs[1].Notes, prs[2].Notes)
+	}
+
+	// The answer is kept until the PR changes.
+	again := []pr.PR{own}
+	if err := client.annotateNotes(context.Background(), again); err != nil || again[0].Notes != 2 || requests != 1 {
+		t.Fatalf(
+			"expected the kept answer and no new lookup, got %d notes, %d lookups, %v",
+			again[0].Notes,
+			requests,
+			err,
+		)
+	}
+
+	changed := own
+	changed.UpdatedAt = time.Now()
+
+	if err := client.annotateNotes(context.Background(), []pr.PR{changed}); err != nil || requests != 2 {
+		t.Fatalf("expected a new lookup for a changed PR, got %d lookups, %v", requests, err)
+	}
+}

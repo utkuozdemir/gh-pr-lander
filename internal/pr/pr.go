@@ -118,9 +118,14 @@ type PR struct {
 	// their latest review.
 	Approvals int
 	// ReviewThreads is the number of inline review comment threads, of which
-	// ResolvedReviewThreads are resolved.
+	// ResolvedReviewThreads are resolved. Notes is how many of the unresolved
+	// ones are notes: threads the user started on their own PR that nobody
+	// else replied to.
 	ReviewThreads         int
 	ResolvedReviewThreads int
+	Notes                 int
+	// UpdatedAt is when GitHub last saw the PR change.
+	UpdatedAt time.Time
 	// TakenOverFrom is the original author's login when the PR was opened by
 	// someone else and the user committed to it. Empty for the user's own PRs.
 	TakenOverFrom string
@@ -142,10 +147,27 @@ func (p PR) RepoShort() string {
 	return fmt.Sprintf("%s#%d", p.Repo, p.Number)
 }
 
-// UnresolvedThreads is the number of review comment threads nobody has marked
-// as resolved.
+// CommentThreads is the number of review comment threads that ask for
+// something. Notes are left out.
+func (p PR) CommentThreads() int {
+	return p.ReviewThreads - p.Notes
+}
+
+// NotesLabel words the notes for a row: "1 note", "2 notes", or nothing.
+func (p PR) NotesLabel() string {
+	switch p.Notes {
+	case 0:
+		return ""
+	case 1:
+		return "1 note"
+	default:
+		return fmt.Sprintf("%d notes", p.Notes)
+	}
+}
+
+// UnresolvedThreads is how many of those nobody has marked as resolved.
 func (p PR) UnresolvedThreads() int {
-	return p.ReviewThreads - p.ResolvedReviewThreads
+	return p.CommentThreads() - p.ResolvedReviewThreads
 }
 
 // ComputeOverallStatus derives the single actionable status from the
