@@ -454,3 +454,28 @@ func TestListRendersEveryBranchWithItsHoverText(t *testing.T) {
 		t.Fatal("expected the list to be complete")
 	}
 }
+
+// iOS does not use an SVG icon for a bookmark or the home screen. It wants a
+// PNG, named by the page or found at a fixed address.
+func TestPageOffersAnIconForIOS(t *testing.T) {
+	s, _ := testServer(t)
+
+	get := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+
+		return rec
+	}
+
+	if !strings.Contains(get("/").Body.String(), `rel="apple-touch-icon" href="/static/apple-touch-icon.png"`) {
+		t.Fatal("expected the page to name the icon for iOS")
+	}
+
+	for _, path := range []string{"/static/apple-touch-icon.png", "/apple-touch-icon.png", "/static/favicon-32.png"} {
+		rec := get(path)
+		if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "image/png" {
+			t.Fatalf("%s: expected a PNG, got %d %q", path, rec.Code, rec.Header().Get("Content-Type"))
+		}
+	}
+}

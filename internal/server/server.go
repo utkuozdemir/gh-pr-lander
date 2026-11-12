@@ -21,7 +21,7 @@ import (
 	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
-//go:embed page.html static/htmx.min.js static/favicon.svg
+//go:embed page.html static/htmx.min.js static/favicon.svg static/favicon-32.png static/apple-touch-icon.png
 var assets embed.FS
 
 // Server owns the engine state. The fetch loop and the HTTP handlers both use
@@ -188,6 +188,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /rerun", s.handleRerun)
 	mux.HandleFunc("POST /refresh", s.handleRefresh)
 	mux.Handle("GET /static/", http.FileServerFS(assets))
+	// iOS also asks for the icon at this fixed address, whatever the page says.
+	mux.HandleFunc("GET /apple-touch-icon.png", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, assets, "static/apple-touch-icon.png")
+	})
 
 	// The page has no login, so a request that another website makes through
 	// the owner's browser must not be able to start a merge.

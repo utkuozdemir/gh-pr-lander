@@ -275,6 +275,12 @@ pipe", twice every 10 seconds.
 Only `POST` requests are logged (`logActions`), since the page polls every
 10s. `static/favicon.svg` is the project logo: the favicon, the mark in the
 page header and the image at the top of the README all use that one file.
+iOS ignores an SVG icon for bookmarks, favorites and the home screen, so two
+PNGs are generated from it and committed: `apple-touch-icon.png` (180px,
+square, since iOS rounds the corners itself and shows transparent ones as
+black) and `favicon-32.png`. Regenerate both when the logo changes:
+`sed 's/ rx="7"//' favicon.svg | rsvg-convert -w 180 -h 180 -o apple-touch-icon.png`
+and `rsvg-convert -w 32 -h 32 -o favicon-32.png favicon.svg`.
 
 **Shipping.** `Dockerfile` builds a distroless nonroot image and
 `.github/workflows/image.yml` pushes it to `ghcr.io/utkuozdemir/gh-pr-lander`
