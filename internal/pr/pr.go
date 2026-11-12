@@ -94,7 +94,7 @@ type PR struct {
 	RepoName         string // "widgets"
 	RepoOwner        string // "acme"
 	HeadRepo         string // "you/widgets-fork" (fork, may differ from upstream name)
-	HeadRepoOwner    string // "utkuozdemir"
+	HeadRepoOwner    string // "you"
 	HeadRepoName     string // "widgets-fork" (fork's actual repo name)
 	BaseBranch       string // "main"
 	HeadBranch       string // "fix-grpc"

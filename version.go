@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"runtime/debug"
 	"strings"
 )
@@ -13,16 +14,30 @@ var (
 	commit  string
 )
 
-// buildVersion says which build this is, for the page footer and the log:
-// "v0.6.2 (5433d1f)" for a release, "dev (5433d1f, modified)" for a local
-// build from a changed checkout, "dev" when nothing is known.
+// releaseVersion matches a version that is a plain release, such as v0.8.0.
+var releaseVersion = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+
+// buildVersion says which build this is, for the page footer, the terminal
+// header and the log.
 func buildVersion() string {
-	v, c := version, commit
+	info, _ := debug.ReadBuildInfo()
+
+	return describeBuild(version, commit, info)
+}
+
+// describeBuild puts a build into words: "v0.8.0 (beb41ee)" for a release,
+// "dev (beb41ee, modified)" for a build from a changed checkout, "dev" when
+// nothing is known.
+//
+// The toolchain fills in a version for every build from a checkout. Away from
+// a tag that is a made-up one, such as v0.8.1-0.20261112003422-b87080ac9b0d,
+// which names a release that does not exist. Only a plain release version is
+// shown, anything else is "dev" with the commit.
+func describeBuild(v, c string, info *debug.BuildInfo) string {
 	modified := false
 
-	if info, ok := debug.ReadBuildInfo(); ok {
-		// Set by `go install module@version`.
-		if v == "" && info.Main.Version != "" && info.Main.Version != "(devel)" {
+	if info != nil {
+		if v == "" {
 			v = info.Main.Version
 		}
 
@@ -38,7 +53,7 @@ func buildVersion() string {
 		}
 	}
 
-	if v == "" {
+	if !releaseVersion.MatchString(v) {
 		v = "dev"
 	}
 
@@ -48,8 +63,7 @@ func buildVersion() string {
 		details = append(details, c[:min(len(c), 7)])
 	}
 
-	// The toolchain already marks a version it derived from a changed tree.
-	if modified && !strings.Contains(v, "dirty") {
+	if modified {
 		details = append(details, "modified")
 	}
 

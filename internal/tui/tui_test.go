@@ -13,6 +13,7 @@ import (
 	"github.com/utkuozdemir/gh-pr-lander/internal/config"
 	"github.com/utkuozdemir/gh-pr-lander/internal/engine"
 	"github.com/utkuozdemir/gh-pr-lander/internal/github"
+	"github.com/utkuozdemir/gh-pr-lander/internal/hint"
 	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
@@ -459,6 +460,19 @@ func TestFooterWrapsToTheTerminalWidth(t *testing.T) {
 		}
 	}
 
+	// The list gives up the lines the wrapped footer takes.
+	prs := make([]pr.PR, 10)
+	for i := range prs {
+		prs[i] = pr.PR{Repo: "org/repo", Number: i + 1}
+	}
+
+	m.PRs = prs
+	m.height = 24
+
+	if lines := strings.Count(m.View(), "\n") + 1; lines > m.height {
+		t.Fatalf("expected the view to fit %d lines, got %d", m.height, lines)
+	}
+
 	m.width = 400
 
 	if strings.Contains(m.renderFooter(), "\n") {
@@ -471,5 +485,44 @@ func TestHeaderShowsTheRunningVersion(t *testing.T) {
 
 	if !strings.Contains(m.renderHeader(), "v1.2.3 (abc1234)") {
 		t.Fatalf("expected the header to show the version, got %q", m.renderHeader())
+	}
+
+	// On a narrow terminal the version gives way, and the header still fits.
+	m.width = 30
+	m.lastFetch = time.Now()
+
+	header := m.renderHeader()
+	if strings.Contains(header, "v1.2.3") || lipgloss.Width(header) > 30 {
+		t.Fatalf("expected a header without the version within 30 columns, got %q (%d)", header, lipgloss.Width(header))
+	}
+}
+
+func TestHelpViewExplainsKeysAndStatuses(t *testing.T) {
+	m := model{State: &engine.State{PRs: []pr.PR{{Repo: "org/repo", Number: 1, Title: "a title"}}}, width: 100}
+
+	if !strings.Contains(m.renderFooter(), "help") {
+		t.Fatal("expected the footer to point at the help")
+	}
+
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	m = updated.(model)
+
+	view := m.View()
+	for _, want := range []string{hint.Automerge, hint.Ready, "Rebase onto the base branch"} {
+		if !strings.Contains(strings.Join(strings.Fields(view), " "), want) {
+			t.Fatalf("expected the help to contain %q, got %q", want, view)
+		}
+	}
+
+	if strings.Contains(view, "a title") {
+		t.Fatal("expected the help to take the place of the list")
+	}
+
+	// A key closes it without doing what it normally does.
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = updated.(model)
+
+	if m.help || m.AutoMerge["org/repo#1"] {
+		t.Fatal("expected the key to only close the help")
 	}
 }

@@ -63,7 +63,7 @@ go install github.com/utkuozdemir/gh-pr-lander@latest
 gh-pr-lander
 ```
 
-`gh-pr-lander version` prints which build it is, and the server shows the same at the bottom of its page.
+`gh-pr-lander version` prints which build it is. The terminal app shows the same in its header, and the server at the bottom of its page.
 
 Or `go run .` from source. All settings have defaults, `--help` for the full list:
 
@@ -95,6 +95,7 @@ Or `go run .` from source. All settings have defaults, `--help` for the full lis
 | `Enter` / `o` | Open in browser |
 | `R` | Refresh now |
 | `j/k` / arrows | Navigate |
+| `?` | Explain every key and status |
 | `q` | Quit |
 
 ## Server
@@ -113,6 +114,8 @@ The page lists your PRs with their status. Per PR you can switch automerge and a
 - **Only your own PRs:** a PR you took over from someone else is left to the terminal app, since its author can still push to it.
 - **Side by side with the terminal app:** both work on their own and keep their own switches. If both have automerge on for one PR, the second merge attempt changes nothing.
 
+Hover over any button or status on the page for a one-line explanation of what it does or means. In the terminal app, `?` shows the same explanations for every key and status.
+
 `GET /healthz` answers a short `ok` for liveness and readiness probes. Point probes there and not at the page, which is larger than the 10KB a Kubernetes probe reads.
 
 A container image is published as `ghcr.io/utkuozdemir/gh-pr-lander` for each version tag. In a deployment, name the organizations to watch with `--orgs`. Its entrypoint is the binary, so pass `serve` and the flags as arguments.
@@ -123,9 +126,9 @@ Clones under `~/.gh-pr-lander/repos/` inherit your global gitconfig. If you need
 
 ```
 [user]
-    name = Utku Ozdemir
+    name = Your Name
     email = you@example.com
-    signingkey = 11177A43C6E3752E682AC690DBD13117B0A14E93
+    signingkey = YOUR_KEY_FINGERPRINT
 [commit]
     gpgSign = true
 [tag]

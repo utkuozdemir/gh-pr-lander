@@ -358,4 +358,30 @@ func TestPageShowsResolvedComments(t *testing.T) {
 	if got := data.PRs[1].Comments.Text; got != "" {
 		t.Fatalf("expected nothing for a PR with no comments, got %q", got)
 	}
+
+	p.ResolvedReviewThreads = 3
+	s.handleFetch(github.FetchResult{PRs: []pr.PR{p}})
+
+	if got := s.snapshot().PRs[0].Comments; got.Text != "3/3 resolved" || got.Tone != toneOk {
+		t.Fatalf("expected fully resolved comments to read as fine, got %+v", got)
+	}
+}
+
+// The version sits in the part of the page that polls, so a page left open
+// across an upgrade of the server shows the new one.
+func TestListCarriesTheVersionAndThePRCount(t *testing.T) {
+	s, _ := testServer(t, readyPR(1, "aaa"), readyPR(2, "bbb"))
+
+	s.mu.Lock()
+	s.state.Config.Version = "v1.2.3 (abc1234)"
+	s.mu.Unlock()
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/prs", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "gh-pr-lander v1.2.3 (abc1234)") || !strings.Contains(body, "· 2 PRs") {
+		t.Fatalf("expected the version and the PR count in the list, got %q", body)
+	}
 }

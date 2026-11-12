@@ -37,6 +37,7 @@ h2 { font-size: 13px; margin: 24px 0 8px; color: var(--muted); text-transform: u
    page: a bar that appears above the list pushes every row down, and the
    button that was just pressed moves out from under the finger. */
 .flash.note { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 10; margin: 0;
+  pointer-events: none; /* a tap goes to the button under it */
   width: max-content; max-width: calc(100% - 32px); box-shadow: 0 6px 24px rgba(0, 0, 0, .35);
   animation: gone .4s 5s forwards; }
 .flash.note.err { animation-delay: 15s; }
@@ -93,7 +94,7 @@ button[aria-pressed="true"] { background: var(--on); border-color: var(--on); co
 button.go { border-color: var(--ok); color: var(--ok); font-weight: 600; }
 button:disabled { opacity: .4; cursor: default; }
 .empty { color: var(--muted); padding: 24px 0; text-align: center; }
-footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--muted); font-size: 12px; text-align: center; }
+footer { padding: 14px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
 </style>
 <script src="/static/htmx.min.js"></script>
 </head>
@@ -101,7 +102,6 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
 <main id="main" hx-target="#main" hx-swap="innerHTML">
 {{template "main" .}}
 </main>
-<footer>gh-pr-lander {{.Version}}</footer>
 </body>
 </html>
 {{end}}
@@ -109,7 +109,7 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
 {{define "main"}}
 <header>
   <h1><img src="/static/favicon.svg" alt="" width="24" height="24">Pull requests</h1>
-  <form hx-post="/refresh"><button>Refresh</button></form>
+  <form hx-post="/refresh"><button title="{{.Hint.Refresh}}">Refresh</button></form>
 </header>
 {{if .Flash.Text}}<div class="flash note{{if .Flash.Err}} err{{end}}" role="status">{{.Flash.Text}}</div>{{end}}
 {{template "list" .}}
@@ -119,20 +119,20 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
 <div id="list" hx-get="/prs" hx-trigger="every 10s" hx-target="this" hx-swap="outerHTML">
   {{/* The forms below name their own target. Without it they would inherit this element's and put the whole answer, header included, in place of the list. */}}
   {{if .FetchErr}}<div class="flash err">Could not reach GitHub: {{.FetchErr}}</div>{{end}}
-  <div class="meta">Updated {{.Fetched}}</div>
+  <div class="meta"><span title="{{.Hint.Updated}}">Updated {{.Fetched}}</span>{{if .PRs}} · {{len .PRs}} PRs{{end}}</div>
 
   {{range .PRs}}
   <article class="card">
     <div class="top">
-      <a class="ref" href="{{.URL}}" target="_blank" rel="noopener">{{.Repo}}<b>#{{.Number}}</b></a>
-      <span class="badge {{.Badge.Tone}}">{{.Badge.Text}}</span>
+      <a class="ref" href="{{.URL}}" target="_blank" rel="noopener" title="{{$.Hint.Open}}">{{.Repo}}<b>#{{.Number}}</b></a>
+      <span class="badge {{.Badge.Tone}}" title="{{.Badge.Hint}}">{{.Badge.Text}}</span>
     </div>
     <div class="title">{{.Title}}</div>
     <div class="marks">
-      <span>Base <span class="{{.Base.Tone}}">{{.Base.Text}}</span></span>
-      <span>CI <span class="{{.CI.Tone}}">{{.CI.Text}}</span></span>
-      <span>Review <span class="{{.Review.Tone}}">{{.Review.Text}}</span></span>
-      {{if .Comments.Text}}<span>Comments <span class="{{.Comments.Tone}}">{{.Comments.Text}}</span></span>{{end}}
+      <span title="{{.Base.Hint}}">Base <span class="{{.Base.Tone}}">{{.Base.Text}}</span></span>
+      <span title="{{.CI.Hint}}">CI <span class="{{.CI.Tone}}">{{.CI.Text}}</span></span>
+      <span title="{{.Review.Hint}}">Review <span class="{{.Review.Tone}}">{{.Review.Text}}</span></span>
+      {{if .Comments.Text}}<span title="{{.Comments.Hint}}">Comments <span class="{{.Comments.Tone}}">{{.Comments.Text}}</span></span>{{end}}
     </div>
     <div class="actions">
       <div class="auto">
@@ -140,28 +140,28 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
           <input type="hidden" name="key" value="{{.Key}}">
           <input type="hidden" name="sha" value="{{.SHA}}">
           <input type="hidden" name="kind" value="automerge">
-          <button class="switch" aria-pressed="{{.AutoMerge}}">Automerge<small>{{if .AutoMerge}}on{{else}}off{{end}}</small></button>
+          <button class="switch" aria-pressed="{{.AutoMerge}}" title="{{$.Hint.Automerge}}">Automerge<small>{{if .AutoMerge}}on{{else}}off{{end}}</small></button>
         </form>
         <div class="conds">
           <form hx-post="/condition" hx-target="#main" hx-swap="innerHTML">
             <input type="hidden" name="key" value="{{.Key}}">
             <input type="hidden" name="sha" value="{{.SHA}}">
             <input type="hidden" name="kind" value="approvals">
-            <span class="lab">Approvals</span>
+            <span class="lab" title="{{$.Hint.Approvals}}">Approvals</span>
             <span class="seg">
-              <button name="value" value="1" aria-pressed="{{eq .Approvals 1}}">default</button>
-              <button name="value" value="2" aria-pressed="{{eq .Approvals 2}}">2</button>
-              <button name="value" value="3" aria-pressed="{{eq .Approvals 3}}">3</button>
+              <button name="value" value="1" aria-pressed="{{eq .Approvals 1}}" title="{{$.Hint.ApprovalsDefault}}">default</button>
+              <button name="value" value="2" aria-pressed="{{eq .Approvals 2}}" title="{{$.Hint.Approvals2}}">2</button>
+              <button name="value" value="3" aria-pressed="{{eq .Approvals 3}}" title="{{$.Hint.Approvals3}}">3</button>
             </span>
           </form>
           <form hx-post="/condition" hx-target="#main" hx-swap="innerHTML">
             <input type="hidden" name="key" value="{{.Key}}">
             <input type="hidden" name="sha" value="{{.SHA}}">
             <input type="hidden" name="kind" value="comments">
-            <span class="lab">Comments</span>
+            <span class="lab" title="{{$.Hint.Comments}}">Comments</span>
             <span class="seg">
-              <button name="value" value="any" aria-pressed="{{not .ResolvedOnly}}">any</button>
-              <button name="value" value="resolved" aria-pressed="{{.ResolvedOnly}}">resolved</button>
+              <button name="value" value="any" aria-pressed="{{not .ResolvedOnly}}" title="{{$.Hint.CommentsAny}}">any</button>
+              <button name="value" value="resolved" aria-pressed="{{.ResolvedOnly}}" title="{{$.Hint.CommentsResolved}}">resolved</button>
             </span>
           </form>
         </div>
@@ -170,18 +170,18 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
         <input type="hidden" name="key" value="{{.Key}}">
         <input type="hidden" name="sha" value="{{.SHA}}">
         <input type="hidden" name="kind" value="autorerun">
-        <button aria-pressed="{{.AutoRerun}}">Autorerun {{if .AutoRerun}}on{{else}}off{{end}}</button>
+        <button aria-pressed="{{.AutoRerun}}" title="{{$.Hint.Autorerun}}">Autorerun {{if .AutoRerun}}on{{else}}off{{end}}</button>
       </form>
       <div class="manual">
         <form hx-post="/merge" hx-target="#main" hx-swap="innerHTML" hx-confirm="Merge {{.Key}} now?">
           <input type="hidden" name="key" value="{{.Key}}">
           <input type="hidden" name="sha" value="{{.SHA}}">
-          <button class="go" {{if not .CanMerge}}disabled{{end}}>Merge now</button>
+          <button class="go" {{if .CanMerge}}title="{{$.Hint.Merge}}"{{else}}title="{{$.Hint.MergeNotReady}}" disabled{{end}}>Merge now</button>
         </form>
         <form hx-post="/rerun" hx-target="#main" hx-swap="innerHTML">
           <input type="hidden" name="key" value="{{.Key}}">
           <input type="hidden" name="sha" value="{{.SHA}}">
-          <button {{if not .CanRerun}}disabled{{end}}>Re-run failed</button>
+          <button {{if .CanRerun}}title="{{$.Hint.Rerun}}"{{else}}title="{{$.Hint.RerunNothing}}" disabled{{end}}>Re-run failed</button>
         </form>
       </div>
     </div>
@@ -203,13 +203,16 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
   {{range .Gone}}
   <article class="card">
     <div class="top">
-      <a class="ref" href="{{.URL}}" target="_blank" rel="noopener">{{.Repo}}<b>#{{.Number}}</b></a>
-      <span class="badge {{.Badge.Tone}}">{{.Badge.Text}}</span>
+      <a class="ref" href="{{.URL}}" target="_blank" rel="noopener" title="{{$.Hint.Open}}">{{.Repo}}<b>#{{.Number}}</b></a>
+      <span class="badge {{.Badge.Tone}}" title="{{.Badge.Hint}}">{{.Badge.Text}}</span>
     </div>
     <div class="title">{{.Title}}</div>
     <div class="marks"><span>{{.Ago}}</span></div>
   </article>
   {{end}}
   {{end}}
+  {{/* Inside the part that polls, so a page left open shows the new version
+       after the server is upgraded. */}}
+  <footer><span title="{{.Hint.Version}}">gh-pr-lander {{.Version}}</span></footer>
 </div>
 {{end}}

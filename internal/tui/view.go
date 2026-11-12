@@ -20,12 +20,16 @@ func (m model) View() string {
 
 	var b strings.Builder
 
+	footer := m.renderFooter()
+
 	b.WriteString(m.renderHeader())
 	b.WriteString("\n\n")
 
 	items := m.displayItems()
 
 	switch {
+	case m.help:
+		b.WriteString(m.renderHelp())
 	case m.loading && len(items) == 0:
 		b.WriteString("  " + m.spinner.View() + " Loading PRs...")
 		b.WriteString("\n")
@@ -35,7 +39,7 @@ func (m model) View() string {
 	case len(items) == 0:
 		b.WriteString("  No open PRs found.\n")
 	default:
-		b.WriteString(m.renderItemList(items))
+		b.WriteString(m.renderItemList(items, strings.Count(footer, "\n")+1))
 	}
 
 	if m.status != "" {
@@ -51,16 +55,13 @@ func (m model) View() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(m.renderFooter())
+	b.WriteString(footer)
 
 	return b.String()
 }
 
 func (m model) renderHeader() string {
 	title := headerStyle.Render("gh-pr-lander")
-	if m.Config.Version != "" {
-		title += " " + headerInfoStyle.Render(m.Config.Version)
-	}
 
 	var info string
 	if m.loading {
@@ -76,17 +77,26 @@ func (m model) renderHeader() string {
 	}
 
 	right := headerInfoStyle.Render(info + prCount)
+
+	// The version is the first thing to give way on a narrow terminal. A
+	// header wider than the screen wraps and pushes the list down.
+	if m.Config.Version != "" {
+		withVersion := title + " " + headerInfoStyle.Render(m.Config.Version)
+		if m.width <= 0 || lipgloss.Width(withVersion)+1+lipgloss.Width(right) <= m.width-2 {
+			title = withVersion
+		}
+	}
+
 	gap := max(m.width-lipgloss.Width(title)-lipgloss.Width(right)-2, 1)
 
 	return title + strings.Repeat(" ", gap) + right
 }
 
-func (m model) renderItemList(items []displayItem) string {
+func (m model) renderItemList(items []displayItem, footerLines int) string {
 	var b strings.Builder
 
 	// Everything around the list takes 7 lines plus the footer, which wraps.
 	linesPerPR := 4
-	footerLines := strings.Count(m.renderFooter(), "\n") + 1
 	availableHeight := max(m.height-7-footerLines, linesPerPR)
 	maxVisible := max(availableHeight/linesPerPR, 1)
 
@@ -349,6 +359,12 @@ func truncateDisplayWidth(s string, maxWidth int) string {
 func (m model) renderFooter() string {
 	type footerKey struct{ key, desc string }
 
+	if m.help {
+		return footerStyle.Render(
+			footerKeyStyle.Render("any key") + " back  ·  " + footerKeyStyle.Render("q") + " quit",
+		)
+	}
+
 	keys := []footerKey{
 		{"m", "merge"},
 		{"r", "rebase"},
@@ -361,6 +377,7 @@ func (m model) renderFooter() string {
 		{"J/K", "queue order"},
 		{"o", "open"},
 		{"R", "refresh"},
+		{"?", "help"},
 		{"q", "quit"},
 	}
 

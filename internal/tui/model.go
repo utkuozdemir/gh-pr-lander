@@ -47,6 +47,8 @@ type model struct {
 	status    string
 	spinner   spinner.Model
 
+	help bool // the help view is shown instead of the list
+
 	rebaseState map[string]autoRebaseState // attempts and guards, in-memory
 	rebasing    string                     // PR with a background rebase running
 
@@ -254,7 +256,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	items := m.displayItems()
 
+	// The help view covers the list, so only the keys that close it or quit
+	// do anything while it is open.
+	if m.help {
+		switch msg.String() {
+		case "q", "ctrl+c":
+			m.quitting = true
+
+			return m, tea.Quit
+		default:
+			m.help = false
+
+			return m, nil
+		}
+	}
+
 	switch msg.String() {
+	case "?":
+		m.help = true
+
+		return m, nil
 	case "q", "ctrl+c":
 		m.quitting = true
 

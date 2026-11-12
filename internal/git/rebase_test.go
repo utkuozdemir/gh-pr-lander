@@ -12,7 +12,7 @@ func TestBuildRebaseScriptIsWellFormed(t *testing.T) {
 	script, err := BuildRebaseScript("/tmp/data", pr.PR{
 		RepoOwner:     "acme",
 		RepoName:      "widgets",
-		HeadRepoOwner: "utkuozdemir",
+		HeadRepoOwner: "you",
 		HeadRepoName:  "widgets",
 		HeadBranch:    "fix-thing",
 		BaseBranch:    "main",

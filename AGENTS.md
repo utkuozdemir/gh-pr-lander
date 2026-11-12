@@ -39,7 +39,9 @@ and approving a contributor's workflows (`w`) is terminal only.
 What both show today: the PR list with base, CI, review with the approval
 count, resolved/total comments, the automerge and autorerun switches, the
 automerge conditions and what automerge waits for, give-up states, recently
-merged PRs, refresh, and the running version (terminal header, page footer).
+merged PRs, the PR count, refresh, the running version (terminal header, page
+footer), and an explanation of every control and status (hover text on the
+page, the `?` help view in the terminal app, both from `internal/hint`).
 
 ## Architecture
 
@@ -87,6 +89,10 @@ main  ──>  tui     ──>  engine ──> github ──> pr
   synchronous methods and starts no goroutines. A GitHub call is handed back
   as a `Work` func for the front end to run, and its `Result` goes into the
   matching `...Done` method. This is the part a second front end reuses.
+- **`internal/hint`** — the one-line explanations of every control and status.
+  The page shows them as hover text (`title`), the terminal app in its help
+  view (`?`, `help.go`). Written once so the two cannot drift. Keep them to
+  one or two short, plain sentences.
 - **`internal/tui`** — the Bubble Tea front end: model, update loop, views,
   styles, and what needs the YubiKey (rebase and the autorebase queue in
   `rebase.go`). The model embeds `*engine.State`, wraps each `engine.Work` in
@@ -230,7 +236,8 @@ Three things to know when changing the page:
 - **The flash message sits outside the list**, so the list's polling never
   replaces it. It goes away through a CSS animation (5s, 15s for an error).
 - **Nothing that appears after a tap may move the buttons.** The flash
-  message is a fixed overlay at the bottom of the page, and the "Automerge
+  message is a fixed overlay at the bottom of the page (with
+  `pointer-events: none`, so a tap on a button under it still lands), and the "Automerge
   waits for" and "gave up" lines sit below a card's buttons. Both used to be
   above, so the row jumped down on every tap and back up when the message
   faded, and the button left the cursor.
@@ -238,12 +245,18 @@ Three things to know when changing the page:
   closed and replaced on every fetch result) and answers with the fresh list.
 
 The page footer and the startup log say which build is running
-(`buildVersion` in `version.go`, passed along as `Config.Version`). A release
+(`buildVersion` in `version.go`, passed along as `Config.Version`). The
+footer sits inside the list that polls, so a page left open across an upgrade
+shows the new version. A release
 image gets it through `-ldflags -X main.version/-X main.commit` from the
 `VERSION` and `COMMIT` build args the tag workflow sets, because the Docker
 build context has no `.git`. Any other build falls back to what the Go
 toolchain recorded: the module version for `go install module@vX`, else the
-commit, plus "modified" for a changed checkout.
+commit, plus "modified" for a changed checkout. Since Go 1.24 the toolchain
+also fills in `Main.Version` for a build from a checkout, and away from a tag
+that is a made-up pseudo-version such as `v0.8.1-0.20261112003422-b87080ac9b0d`.
+`describeBuild` therefore shows a version only when it is a plain `vX.Y.Z`,
+and "dev" otherwise.
 
 `GET /healthz` is for probes. The kubelet reads only the first 10KB of a
 probe answer and then closes the connection. Once the page grew past that

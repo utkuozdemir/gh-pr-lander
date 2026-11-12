@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/utkuozdemir/gh-pr-lander/internal/hint"
 	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
@@ -17,6 +18,7 @@ type flash struct {
 }
 
 type pageData struct {
+	Hint     hints
 	Version  string
 	Flash    flash
 	PRs      []prView
@@ -25,10 +27,41 @@ type pageData struct {
 	FetchErr string
 }
 
-// mark is one piece of a PR's status: its text and the tone to show it in.
+// hints are the hover texts of the page's controls, the same sentences the
+// terminal app shows in its help view.
+type hints struct {
+	Automerge, Approvals, ApprovalsDefault, Approvals2, Approvals3 string
+	Comments, CommentsAny, CommentsResolved, Autorerun             string
+	Merge, MergeNotReady, Rerun, RerunNothing, Refresh, Open       string
+	Updated, Version                                               string
+}
+
+var pageHints = hints{
+	Automerge:        hint.Automerge,
+	Approvals:        hint.Approvals,
+	ApprovalsDefault: hint.ApprovalsDefault,
+	Approvals2:       hint.ApprovalsAtLeast(2),
+	Approvals3:       hint.ApprovalsAtLeast(3),
+	Comments:         hint.Comments,
+	CommentsAny:      hint.CommentsAny,
+	CommentsResolved: hint.CommentsResolved,
+	Autorerun:        hint.Autorerun,
+	Merge:            hint.Merge,
+	MergeNotReady:    hint.MergeNotReady,
+	Rerun:            hint.Rerun,
+	RerunNothing:     hint.RerunNothing,
+	Refresh:          hint.Refresh,
+	Open:             hint.Open,
+	Updated:          hint.Updated,
+	Version:          hint.Version,
+}
+
+// mark is one piece of a PR's status: its text, the tone to show it in, and
+// the explanation shown on hover.
 type mark struct {
 	Text string
 	Tone string
+	Hint string
 }
 
 // The tones are the CSS classes of the page.
@@ -83,7 +116,7 @@ func (s *Server) snapshot() pageData {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	data := pageData{Fetched: "not yet", Version: s.state.Config.Version}
+	data := pageData{Fetched: "not yet", Version: s.state.Config.Version, Hint: pageHints}
 
 	if !s.lastFetch.IsZero() {
 		data.Fetched = ago(s.lastFetch)
@@ -118,7 +151,9 @@ func (s *Server) snapshot() pageData {
 		}
 
 		if p.ReviewThreads > 0 {
-			v.Comments = mark{fmt.Sprintf("%d/%d resolved", p.ResolvedReviewThreads, p.ReviewThreads), toneOk}
+			v.Comments = mark{
+				fmt.Sprintf("%d/%d resolved", p.ResolvedReviewThreads, p.ReviewThreads), toneOk, hint.CommentCount,
+			}
 			if p.UnresolvedThreads() > 0 {
 				v.Comments.Tone = toneWarn
 			}
@@ -130,9 +165,9 @@ func (s *Server) snapshot() pageData {
 
 		switch {
 		case v.MergeGaveUp:
-			v.Badge = mark{"MERGE FAIL", toneFail}
+			v.Badge = mark{"MERGE FAIL", toneFail, hint.MergeGaveUp}
 		case v.RerunGaveUp:
-			v.Badge = mark{"RERUN FAIL", toneFail}
+			v.Badge = mark{"RERUN FAIL", toneFail, hint.RerunGaveUp}
 		}
 
 		data.PRs = append(data.PRs, v)
@@ -144,15 +179,15 @@ func (s *Server) snapshot() pageData {
 			Number: mp.PR.Number,
 			Title:  mp.PR.Title,
 			URL:    mp.PR.URL,
-			Badge:  mark{"CHECKING", toneNone},
+			Badge:  mark{"CHECKING", toneNone, hint.Checking},
 			Ago:    ago(mp.GoneAt),
 		}
 
 		switch {
 		case mp.Confirmed && mp.Merged:
-			g.Badge = mark{"MERGED", toneOk}
+			g.Badge = mark{"MERGED", toneOk, hint.Merged}
 		case mp.Confirmed:
-			g.Badge = mark{"CLOSED", toneNone}
+			g.Badge = mark{"CLOSED", toneNone, hint.Closed}
 		}
 
 		data.Gone = append(data.Gone, g)
@@ -177,17 +212,17 @@ func ago(t time.Time) string {
 func badge(status pr.OverallStatus) mark {
 	switch status {
 	case pr.StatusReady:
-		return mark{"READY", toneOk}
+		return mark{"READY", toneOk, hint.Ready}
 	case pr.StatusStale:
-		return mark{"STALE", toneWarn}
+		return mark{"STALE", toneWarn, hint.Stale}
 	case pr.StatusPending:
-		return mark{"PENDING", toneInfo}
+		return mark{"PENDING", toneInfo, hint.Pending}
 	case pr.StatusFailed:
-		return mark{"FAILED", toneFail}
+		return mark{"FAILED", toneFail, hint.Failed}
 	case pr.StatusBlocked:
-		return mark{"BLOCKED", toneFail}
+		return mark{"BLOCKED", toneFail, hint.Blocked}
 	case pr.StatusDraft:
-		return mark{"DRAFT", toneNone}
+		return mark{"DRAFT", toneNone, hint.Draft}
 	default:
 		return mark{}
 	}
@@ -196,36 +231,46 @@ func badge(status pr.OverallStatus) mark {
 func baseMark(p pr.PR) mark {
 	switch p.BaseStatus {
 	case pr.BaseSynced:
-		return mark{"synced", toneOk}
+		return mark{"synced", toneOk, hint.BaseSynced}
 	case pr.BaseBehind:
 		if p.BehindUnenforced {
-			return mark{"behind (not enforced)", toneInfo}
+			return mark{"behind (not enforced)", toneInfo, hint.BaseUnenforced}
 		}
 
-		return mark{"behind", toneWarn}
+		return mark{"behind", toneWarn, hint.BaseBehind}
 	case pr.BaseConflict:
-		return mark{"conflict", toneFail}
+		return mark{"conflict", toneFail, hint.BaseConflict}
 	case pr.BaseUnknown:
-		return mark{"checking", toneNone}
+		return mark{"checking", toneNone, hint.BaseUnknown}
 	default:
 		return mark{}
 	}
 }
 
+// checksHint explains passed checks, including why a PR counts as passed while
+// some are still running.
+func checksHint(p pr.PR) string {
+	if p.Checks.Optional > 0 {
+		return hint.ChecksOptional
+	}
+
+	return hint.Checks
+}
+
 func ciMark(p pr.PR) mark {
 	if p.AwaitingApprovalRuns > 0 {
-		return mark{"workflow awaiting approval", toneWarn}
+		return mark{"workflow awaiting approval", toneWarn, hint.ChecksUnapproved}
 	}
 
 	switch p.CIStatus {
 	case pr.CIPassed:
-		return mark{p.Checks.String(), toneOk}
+		return mark{p.Checks.String(), toneOk, checksHint(p)}
 	case pr.CIRunning:
-		return mark{p.Checks.String(), toneInfo}
+		return mark{p.Checks.String(), toneInfo, hint.Checks}
 	case pr.CIFailed:
-		return mark{p.Checks.String(), toneFail}
+		return mark{p.Checks.String(), toneFail, hint.Checks}
 	case pr.CINone:
-		return mark{"no checks", toneNone}
+		return mark{"no checks", toneNone, hint.Checks}
 	default:
 		return mark{}
 	}
@@ -241,18 +286,18 @@ func reviewMark(p pr.PR) mark {
 
 	switch p.ReviewStatus {
 	case pr.ReviewApproved:
-		return mark{"approved" + approvals, toneOk}
+		return mark{"approved" + approvals, toneOk, hint.Review}
 	case pr.ReviewChangesRequested:
-		return mark{"changes requested" + approvals, toneFail}
+		return mark{"changes requested" + approvals, toneFail, hint.Review}
 	case pr.ReviewPending:
-		return mark{"pending" + approvals, toneWarn}
+		return mark{"pending" + approvals, toneWarn, hint.Review}
 	case pr.ReviewNone:
 		// The repository asks for no review, but people approved anyway.
 		if p.Approvals > 0 {
-			return mark{"approved" + approvals, toneOk}
+			return mark{"approved" + approvals, toneOk, hint.Review}
 		}
 
-		return mark{"none", toneNone}
+		return mark{"none", toneNone, hint.Review}
 	default:
 		return mark{}
 	}
