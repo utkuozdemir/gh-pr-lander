@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/utkuozdemir/gh-pr-lander/internal/config"
 	"github.com/utkuozdemir/gh-pr-lander/internal/github"
+	"github.com/utkuozdemir/gh-pr-lander/internal/hint"
 	"github.com/utkuozdemir/gh-pr-lander/internal/pr"
 )
 
@@ -407,5 +409,48 @@ func TestAgesCarryTheirSecondsForThePageToKeepCounting(t *testing.T) {
 
 	if !strings.Contains(rec.Body.String(), `data-age="0"`) {
 		t.Fatalf("expected the list to carry the age in seconds, got %q", rec.Body.String())
+	}
+}
+
+// html/template checks a field name only when its branch runs, so a typo in a
+// branch no test reaches would only show up on the live page.
+func TestListRendersEveryBranchWithItsHoverText(t *testing.T) {
+	failed := readyPR(1, "aaa")
+	failed.CIStatus, failed.OverallStatus = pr.CIFailed, pr.StatusFailed
+	failed.ReviewThreads = 2
+
+	optional := readyPR(2, "bbb")
+	optional.CIStatus = pr.CIPassed
+	optional.Checks = pr.CheckSummary{Total: 3, Passed: 2, Running: 1, Optional: 1}
+
+	s, _ := testServer(t, failed, optional, readyPR(3, "ccc"))
+
+	// #3 leaves the list, and both give-up states are set on #1.
+	s.handleFetch(github.FetchResult{PRs: []pr.PR{failed, optional}})
+	s.works.Wait()
+
+	s.mu.Lock()
+	s.state.AutoMerge["org/repo#1"], s.state.MergeFailed["org/repo#1"] = true, true
+	s.state.AutoRerun["org/repo#1"], s.state.RerunFailed["org/repo#1"] = true, true
+	s.mu.Unlock()
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/prs", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	for _, want := range []string{
+		hint.Rerun, hint.RerunNothing, hint.Merge, hint.MergeNotReady, hint.ChecksOptional,
+		hint.MergeGaveUp, hint.RerunGaveUp, hint.CommentCount, hint.Automerge, hint.Version,
+		"Recently merged or closed",
+	} {
+		if !strings.Contains(body, template.HTMLEscapeString(want)) {
+			t.Fatalf("expected the list to contain %q", want)
+		}
+	}
+
+	// The template ran to its end.
+	if !strings.Contains(body, "</footer>") {
+		t.Fatal("expected the list to be complete")
 	}
 }

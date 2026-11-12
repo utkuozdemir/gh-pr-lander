@@ -42,13 +42,15 @@ func (m model) View() string {
 		b.WriteString(m.renderItemList(items, strings.Count(footer, "\n")+1))
 	}
 
-	if m.status != "" {
+	// The help view has the screen to itself. A status line under it would
+	// push its first lines off the top.
+	if m.status != "" && !m.help {
 		b.WriteString("\n")
 		b.WriteString("  " + m.status)
 		b.WriteString("\n")
 	}
 
-	if m.err != nil && len(m.PRs) > 0 {
+	if m.err != nil && len(m.PRs) > 0 && !m.help {
 		b.WriteString("\n")
 		b.WriteString(errorStyle.Render("  Fetch error: " + m.err.Error()))
 		b.WriteString("\n")
@@ -74,6 +76,9 @@ func (m model) renderHeader() string {
 	prCount := ""
 	if len(m.PRs) > 0 {
 		prCount = fmt.Sprintf(" · %d PRs", len(m.PRs))
+		if len(m.PRs) == 1 {
+			prCount = " · 1 PR"
+		}
 	}
 
 	right := headerInfoStyle.Render(info + prCount)
@@ -360,9 +365,12 @@ func (m model) renderFooter() string {
 	type footerKey struct{ key, desc string }
 
 	if m.help {
-		return footerStyle.Render(
-			footerKeyStyle.Render("any key") + " back  ·  " + footerKeyStyle.Render("q") + " quit",
-		)
+		keys := footerKeyStyle.Render("any other key") + " back  ·  " + footerKeyStyle.Render("q") + " quit"
+		if m.helpMaxOffset() > 0 {
+			keys = footerKeyStyle.Render("j/k") + " scroll  ·  " + keys
+		}
+
+		return footerStyle.Render(keys)
 	}
 
 	keys := []footerKey{

@@ -29,7 +29,7 @@ func ApprovalsAtLeast(approvals int) string {
 
 // What a pull request's overall status means.
 const (
-	Ready       = "Approved, up to date, and every required check passed. It can be merged."
+	Ready       = "Up to date, every required check passed, and it has the approvals the repository requires. It can be merged."
 	Stale       = "The base branch has new commits. It needs a rebase before it can be merged."
 	Pending     = "Waiting for checks to finish or for a review."
 	Failed      = "A check failed."
@@ -54,6 +54,9 @@ const (
 	ChecksUnapproved = "A workflow waits for a maintainer to approve it before it runs."
 	Review           = "The review state. The number in parentheses is how many people approved."
 	CommentCount     = "Resolved review comments, out of all of them."
+	TakenOver        = "Opened by someone else. You committed to it, so it is listed here."
+	QueueActive      = "This pull request holds its autorebase queue. The ones behind it wait for it to merge."
+	QueueWaiting     = "Its place in the autorebase queue. It is rebased when the ones before it are merged."
 	Updated          = "When the list was last fetched from GitHub."
 	Version          = "The version that is running."
 )

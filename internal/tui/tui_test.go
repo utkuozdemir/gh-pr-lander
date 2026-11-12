@@ -518,7 +518,26 @@ func TestHelpViewExplainsKeysAndStatuses(t *testing.T) {
 		t.Fatal("expected the help to take the place of the list")
 	}
 
-	// A key closes it without doing what it normally does.
+	// On a normal terminal the help is longer than the screen. It fits, and
+	// the list keys scroll it instead of closing it.
+	m.width, m.height = 80, 24
+
+	if lines := strings.Count(m.View(), "\n") + 1; lines > m.height {
+		t.Fatalf("expected the help to fit %d lines, got %d", m.height, lines)
+	}
+
+	if !strings.Contains(m.View(), "Jump to the first") || !strings.Contains(m.renderFooter(), "scroll") {
+		t.Fatalf("expected the top of the help and a scroll hint, got %q", m.View())
+	}
+
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
+	m = updated.(model)
+
+	if !m.help || !strings.Contains(m.View(), "autorebase queue") || strings.Contains(m.View(), "Jump to the first") {
+		t.Fatalf("expected the end of the help after scrolling down, got %q", m.View())
+	}
+
+	// Any other key closes it without doing what it normally does.
 	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
 	m = updated.(model)
 

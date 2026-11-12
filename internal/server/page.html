@@ -148,7 +148,7 @@ footer { padding: 14px 0 0; color: var(--muted); font-size: 12px; text-align: ce
 <div id="list" hx-get="/prs" hx-trigger="every 10s" hx-target="this" hx-swap="outerHTML">
   {{/* The forms below name their own target. Without it they would inherit this element's and put the whole answer, header included, in place of the list. */}}
   {{if .FetchErr}}<div class="flash err">Could not reach GitHub: {{.FetchErr}}</div>{{end}}
-  <div class="meta"><span title="{{.Hint.Updated}}">Updated <span {{if ge .Fetched.Seconds 0}}data-age="{{.Fetched.Seconds}}"{{end}}>{{.Fetched.Text}}</span></span>{{if .PRs}} · {{len .PRs}} PRs{{end}}</div>
+  <div class="meta"><span title="{{.Hint.Updated}}">Updated <span {{if ge .Fetched.Seconds 0}}data-age="{{.Fetched.Seconds}}"{{end}}>{{.Fetched.Text}}</span></span>{{if .PRs}} · {{len .PRs}} PR{{if ne (len .PRs) 1}}s{{end}}{{end}}</div>
 
   {{range .PRs}}
   <article class="card">
@@ -218,8 +218,8 @@ footer { padding: 14px 0 0; color: var(--muted); font-size: 12px; text-align: ce
     {{if or .Waits .MergeGaveUp .RerunGaveUp}}
     <div class="marks hints">
       {{if .Waits}}<span class="warn">Automerge waits for: {{.Waits}}</span>{{end}}
-      {{if .MergeGaveUp}}<span class="fail">merge gave up on this commit</span>{{end}}
-      {{if .RerunGaveUp}}<span class="fail">re-run gave up on this commit</span>{{end}}
+      {{if .MergeGaveUp}}<span class="fail" title="{{$.Hint.MergeGaveUp}}">merge gave up on this commit</span>{{end}}
+      {{if .RerunGaveUp}}<span class="fail" title="{{$.Hint.RerunGaveUp}}">re-run gave up on this commit</span>{{end}}
     </div>
     {{end}}
   </article>

@@ -92,7 +92,10 @@ main  ──>  tui     ──>  engine ──> github ──> pr
 - **`internal/hint`** — the one-line explanations of every control and status.
   The page shows them as hover text (`title`), the terminal app in its help
   view (`?`, `help.go`). Written once so the two cannot drift. Keep them to
-  one or two short, plain sentences.
+  one or two short, plain sentences. The help view is longer than a normal
+  terminal, so it shows a window of its lines (`helpLines`, `helpRoom`) and
+  the list keys scroll it. Bubble Tea drops lines that do not fit from the
+  top, so anything taller than the screen loses its beginning.
 - **`internal/tui`** — the Bubble Tea front end: model, update loop, views,
   styles, and what needs the YubiKey (rebase and the autorebase queue in
   `rebase.go`). The model embeds `*engine.State`, wraps each `engine.Work` in
@@ -698,6 +701,13 @@ the generated assignment in real bash to prove it stays literal.
   `detectMerged`.
 - **`db.yaml` only stores enabled flags, the autorebase queue order and the
   last autorerun time.** Don't add derived state there, derive it from the API.
+- **The tool has no git config of its own.** It used to add
+  `include.path = ~/.config/gh-pr-lander/gitconfig` to every clone, for a
+  separate identity or signing key. Git does that itself with
+  `[includeIf "gitdir:~/.gh-pr-lander/repos/"]` in the user's global config
+  (the README shows it), so the feature was removed before anyone depended
+  on it. Clones made earlier still carry the include, and git ignores it when
+  the file is missing.
 - **Nothing in this repo is signed**, even though the tool serves a
   signed-commit workflow. Commits are not GPG-signed (no YubiKey touch) and
   only carry the DCO signoff. The global git config signs by default, so commit

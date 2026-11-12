@@ -33,7 +33,7 @@ type hints struct {
 	Automerge, Approvals, ApprovalsDefault, Approvals2, Approvals3 string
 	Comments, CommentsAny, CommentsResolved, Autorerun             string
 	Merge, MergeNotReady, Rerun, RerunNothing, Refresh, Open       string
-	Updated, Version                                               string
+	Updated, Version, MergeGaveUp, RerunGaveUp                     string
 }
 
 var pageHints = hints{
@@ -54,6 +54,8 @@ var pageHints = hints{
 	Open:             hint.Open,
 	Updated:          hint.Updated,
 	Version:          hint.Version,
+	MergeGaveUp:      hint.MergeGaveUp,
+	RerunGaveUp:      hint.RerunGaveUp,
 }
 
 // mark is one piece of a PR's status: its text, the tone to show it in, and
