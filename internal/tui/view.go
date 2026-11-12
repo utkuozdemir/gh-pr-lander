@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -57,6 +58,9 @@ func (m model) View() string {
 
 func (m model) renderHeader() string {
 	title := headerStyle.Render("gh-pr-lander")
+	if m.Config.Version != "" {
+		title += " " + headerInfoStyle.Render(m.Config.Version)
+	}
 
 	var info string
 	if m.loading {
@@ -80,8 +84,10 @@ func (m model) renderHeader() string {
 func (m model) renderItemList(items []displayItem) string {
 	var b strings.Builder
 
+	// Everything around the list takes 7 lines plus the footer, which wraps.
 	linesPerPR := 4
-	availableHeight := max(m.height-8, linesPerPR)
+	footerLines := strings.Count(m.renderFooter(), "\n") + 1
+	availableHeight := max(m.height-7-footerLines, linesPerPR)
 	maxVisible := max(availableHeight/linesPerPR, 1)
 
 	scrollOffset := 0
@@ -362,10 +368,35 @@ func (m model) renderFooter() string {
 		keys = slices.Insert(keys, 3, footerKey{"w", "approve workflows"})
 	}
 
-	parts := make([]string, len(keys))
-	for i, k := range keys {
-		parts[i] = footerKeyStyle.Render(k.key) + " " + k.desc
+	// The keys wrap onto as many lines as the terminal width needs. On one
+	// line the last ones, quit among them, fall off the right edge.
+	const separator = "  ·  "
+
+	width := m.width - 2
+	if width <= 0 {
+		width = math.MaxInt // size not known yet
 	}
 
-	return footerStyle.Render(strings.Join(parts, "  ·  "))
+	var (
+		lines []string
+		line  string
+	)
+
+	for _, k := range keys {
+		part := footerKeyStyle.Render(k.key) + " " + k.desc
+
+		switch {
+		case line == "":
+			line = part
+		case lipgloss.Width(line+separator+part) > width:
+			lines = append(lines, line)
+			line = part
+		default:
+			line += separator + part
+		}
+	}
+
+	lines = append(lines, line)
+
+	return footerStyle.Render(strings.Join(lines, "\n"))
 }

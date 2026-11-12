@@ -343,3 +343,19 @@ func TestPageShowsTheRunningVersion(t *testing.T) {
 		t.Fatal("expected the page to show which version is running")
 	}
 }
+
+func TestPageShowsResolvedComments(t *testing.T) {
+	p := readyPR(1, "aaa")
+	p.ReviewThreads, p.ResolvedReviewThreads = 3, 1
+
+	s, _ := testServer(t, p, readyPR(2, "bbb"))
+
+	data := s.snapshot()
+	if got := data.PRs[0].Comments; got.Text != "1/3 resolved" || got.Tone != toneWarn {
+		t.Fatalf("expected the open comments to stand out, got %+v", got)
+	}
+
+	if got := data.PRs[1].Comments.Text; got != "" {
+		t.Fatalf("expected nothing for a PR with no comments, got %q", got)
+	}
+}

@@ -52,6 +52,9 @@ type prView struct {
 	Base   mark
 	CI     mark
 	Review mark
+	// Comments is the resolved and total review comment threads, empty when
+	// the PR has none.
+	Comments mark
 
 	AutoMerge bool
 	// Approvals and ResolvedOnly are the automerge conditions, and Waits is
@@ -112,6 +115,13 @@ func (s *Server) snapshot() pageData {
 			RerunGaveUp:  s.state.IsRerunFailed(key),
 			CanMerge:     p.OverallStatus == pr.StatusReady,
 			CanRerun:     p.CIStatus == pr.CIFailed,
+		}
+
+		if p.ReviewThreads > 0 {
+			v.Comments = mark{fmt.Sprintf("%d/%d resolved", p.ResolvedReviewThreads, p.ReviewThreads), toneOk}
+			if p.UnresolvedThreads() > 0 {
+				v.Comments.Tone = toneWarn
+			}
 		}
 
 		if v.AutoMerge {

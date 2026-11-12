@@ -32,10 +32,15 @@ h2 { font-size: 13px; margin: 24px 0 8px; color: var(--muted); text-transform: u
 .flash { border: 1px solid var(--line); border-left: 4px solid var(--info); background: var(--card);
   padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; overflow-wrap: anywhere; }
 .flash.err { border-left-color: var(--fail); }
-/* A message about an action goes away by itself, an error a little later. */
-.flash.note { max-height: 200px; overflow: hidden; animation: gone .4s 5s forwards; }
+/* A message about an action floats over the bottom of the page and goes
+   away by itself, an error a little later. It must not take up room in the
+   page: a bar that appears above the list pushes every row down, and the
+   button that was just pressed moves out from under the finger. */
+.flash.note { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 10; margin: 0;
+  width: max-content; max-width: calc(100% - 32px); box-shadow: 0 6px 24px rgba(0, 0, 0, .35);
+  animation: gone .4s 5s forwards; }
 .flash.note.err { animation-delay: 15s; }
-@keyframes gone { to { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; margin: 0; border-width: 0; } }
+@keyframes gone { to { opacity: 0; visibility: hidden; } }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
 .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .ref { font-size: 13px; color: var(--muted); text-decoration: none; overflow-wrap: anywhere; }
@@ -48,6 +53,7 @@ h2 { font-size: 13px; margin: 24px 0 8px; color: var(--muted); text-transform: u
 .info { color: var(--info); } .none { color: var(--none); }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .actions form { margin: 0; }
+.hints { margin-top: 10px; }
 button {
   font: inherit; font-size: 14px; min-height: 40px; padding: 0 14px; border-radius: 8px;
   border: 1px solid var(--line); background: transparent; color: var(--text); cursor: pointer;
@@ -126,9 +132,7 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
       <span>Base <span class="{{.Base.Tone}}">{{.Base.Text}}</span></span>
       <span>CI <span class="{{.CI.Tone}}">{{.CI.Text}}</span></span>
       <span>Review <span class="{{.Review.Tone}}">{{.Review.Text}}</span></span>
-      {{if .Waits}}<span class="warn">Automerge waits for: {{.Waits}}</span>{{end}}
-      {{if .MergeGaveUp}}<span class="fail">merge gave up on this commit</span>{{end}}
-      {{if .RerunGaveUp}}<span class="fail">re-run gave up on this commit</span>{{end}}
+      {{if .Comments.Text}}<span>Comments <span class="{{.Comments.Tone}}">{{.Comments.Text}}</span></span>{{end}}
     </div>
     <div class="actions">
       <div class="auto">
@@ -181,6 +185,14 @@ footer { max-width: 760px; margin: 0 auto; padding: 0 16px 24px; color: var(--mu
         </form>
       </div>
     </div>
+    {{/* Below the buttons, so a line that comes and goes does not move them. */}}
+    {{if or .Waits .MergeGaveUp .RerunGaveUp}}
+    <div class="marks hints">
+      {{if .Waits}}<span class="warn">Automerge waits for: {{.Waits}}</span>{{end}}
+      {{if .MergeGaveUp}}<span class="fail">merge gave up on this commit</span>{{end}}
+      {{if .RerunGaveUp}}<span class="fail">re-run gave up on this commit</span>{{end}}
+    </div>
+    {{end}}
   </article>
   {{else}}
   <div class="empty">No open pull requests.</div>

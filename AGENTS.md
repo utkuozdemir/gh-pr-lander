@@ -27,6 +27,20 @@ autorerun automation.
 User-facing details live in `README.md`. This file is about *how the code
 works* and *why*.
 
+## The two front ends stay consistent
+
+The owner's rule: a request about one front end is a request about both. When
+something is added, changed or fixed in the terminal app or on the page, do
+the same in the other, and say so. The only exception is what needs the
+YubiKey (rebase and the autorebase queue), which the terminal app alone has.
+Known differences that are deliberate: the server leaves out taken-over PRs,
+and approving a contributor's workflows (`w`) is terminal only.
+
+What both show today: the PR list with base, CI, review with the approval
+count, resolved/total comments, the automerge and autorerun switches, the
+automerge conditions and what automerge waits for, give-up states, recently
+merged PRs, refresh, and the running version (terminal header, page footer).
+
 ## Architecture
 
 The code is split into small packages under `internal/`. The dependency
@@ -215,6 +229,11 @@ Three things to know when changing the page:
   lands where only the list was, and the header shows twice.
 - **The flash message sits outside the list**, so the list's polling never
   replaces it. It goes away through a CSS animation (5s, 15s for an error).
+- **Nothing that appears after a tap may move the buttons.** The flash
+  message is a fixed overlay at the bottom of the page, and the "Automerge
+  waits for" and "gave up" lines sit below a card's buttons. Both used to be
+  above, so the row jumped down on every tap and back up when the message
+  faded, and the button left the cursor.
 - **Refresh waits for the fetch it asked for** (`Server.fetched`, a channel
   closed and replaced on every fetch result) and answers with the fresh list.
 
@@ -538,6 +557,10 @@ asleep mid-push) report back instead of holding `model.rebasing` forever.
 - The TUI is tested by constructing `model` values (with a `State` inside) and
   calling `Update` / action methods directly.
 - `model.Update` returns `tea.Model`; cast back with `updated.(model)`.
+- The terminal footer wraps to the terminal width (`renderFooter`), and
+  `renderItemList` subtracts its line count from the room for PRs. On one line
+  the keys ran off the right edge once there were more than about ten, and
+  "q quit" was the first to disappear.
 
 ## Build / test / lint
 

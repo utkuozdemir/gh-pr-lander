@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/utkuozdemir/gh-pr-lander/internal/config"
 	"github.com/utkuozdemir/gh-pr-lander/internal/engine"
@@ -436,5 +437,39 @@ func TestConditionKeysWorkBeforeAutomergeAndShowOnTheRow(t *testing.T) {
 	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
 	if got := updated.(model); got.MinApprovals["org/repo#1"] != 0 {
 		t.Fatalf("expected 1 to drop the approvals condition, got %d", got.MinApprovals["org/repo#1"])
+	}
+}
+
+func TestFooterWrapsToTheTerminalWidth(t *testing.T) {
+	m := model{State: &engine.State{PRs: []pr.PR{{Repo: "org/repo", Number: 1}}}, width: 60}
+
+	footer := m.renderFooter()
+	if !strings.Contains(footer, "quit") {
+		t.Fatalf("expected the footer to keep every key, got %q", footer)
+	}
+
+	lines := strings.Split(footer, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected the footer to wrap at 60 columns, got %q", footer)
+	}
+
+	for _, line := range lines {
+		if width := lipgloss.Width(line); width > 60 {
+			t.Fatalf("line is %d columns wide, wider than the terminal: %q", width, line)
+		}
+	}
+
+	m.width = 400
+
+	if strings.Contains(m.renderFooter(), "\n") {
+		t.Fatal("expected one line on a terminal that is wide enough")
+	}
+}
+
+func TestHeaderShowsTheRunningVersion(t *testing.T) {
+	m := model{State: &engine.State{Config: config.Config{Version: "v1.2.3 (abc1234)"}}, width: 80}
+
+	if !strings.Contains(m.renderHeader(), "v1.2.3 (abc1234)") {
+		t.Fatalf("expected the header to show the version, got %q", m.renderHeader())
 	}
 }
