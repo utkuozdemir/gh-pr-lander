@@ -60,9 +60,11 @@ Needs a GitHub token. Any of these:
 - `gh` CLI logged in (`gh auth login`)
 
 ```
-go install github.com/utkuozdemir/gh-pr-lander@latest
+brew install utkuozdemir/tap/gh-pr-lander
 gh-pr-lander
 ```
+
+Or, with a Go toolchain: `go install github.com/utkuozdemir/gh-pr-lander@latest`. The terminal app runs on macOS. The server also runs on Linux, from the container image.
 
 `gh-pr-lander version` prints which build it is. The terminal app shows the same in its header, and the server at the bottom of its page.
 

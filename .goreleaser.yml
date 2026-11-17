@@ -1,0 +1,67 @@
+---
+version: 2
+
+builds:
+  - binary: gh-pr-lander
+    flags:
+      - -trimpath
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    # the same two values the container image is built with, see version.go
+    ldflags:
+      - -s -w -X main.version=v{{ .Version }} -X main.commit={{ .FullCommit }}
+    env:
+      - CGO_ENABLED=0
+    # the terminal app is a macOS tool: it opens the browser, copies to the clipboard and sends notifications
+    # with what macOS ships. The server runs on Linux from the container image.
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats:
+      - tar.gz
+    files:
+      - LICENSE
+      - README.md
+
+homebrew_casks:
+  - repository:
+      owner: utkuozdemir
+      name: homebrew-tap
+      token: "{{ .Env.PRIVATE_ACCESS_TOKEN }}"
+    skip_upload: auto
+    commit_author:
+      name: Utku Ozdemir
+      email: utkuozdemir@gmail.com
+    directory: Casks
+    homepage: https://github.com/utkuozdemir/gh-pr-lander
+    description: Lands your GitHub pull requests with signed commits and fast-forward merges
+    # the binaries are not notarized, so macOS refuses to run them while they are quarantined
+    custom_block: |
+      on_macos do
+        postflight_steps do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ "{{staged_path}}" }}/gh-pr-lander"]
+        end
+      end
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'

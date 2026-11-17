@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+      # Renovate merges an update without a pull request once this passes on its branch
+      - renovate/**
     paths-ignore:
       - "**.md"
       - ".gitignore"

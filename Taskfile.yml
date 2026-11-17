@@ -20,6 +20,7 @@ tasks:
     cmds:
       - go mod tidy --diff
       - golangci-lint run ./...
+      - goreleaser check
 
   test:
     desc: run unit tests

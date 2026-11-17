@@ -304,12 +304,34 @@ black) and `favicon-32.png`. Regenerate both when the logo changes:
 `sed 's/ rx="7"//' favicon.svg | rsvg-convert -w 180 -h 180 -o apple-touch-icon.png`
 and `rsvg-convert -w 32 -h 32 -o favicon-32.png favicon.svg`.
 
-**Shipping.** `Dockerfile` builds a distroless nonroot image and
-`.github/workflows/image.yml` pushes it to `ghcr.io/utkuozdemir/gh-pr-lander`
-for both amd64 and arm64 when a `v*` tag is pushed, and creates the GitHub
-release for the tag. The repo is private, so the
-package starts private too and has to be made public once in the package
-settings. Deployment manifests live in the owner's homelab repo, not here.
+**Shipping.** A `v*` tag starts `.github/workflows/release.yml`, which has
+two jobs. `image` builds the distroless nonroot image from `Dockerfile` and
+pushes it to `ghcr.io/utkuozdemir/gh-pr-lander` for amd64 and arm64.
+`binaries` runs GoReleaser (`.goreleaser.yml`): macOS archives for both
+architectures, the GitHub release with notes grouped by commit type, and the
+Homebrew cask in the shared `utkuozdemir/homebrew-tap`
+(`brew install utkuozdemir/tap/gh-pr-lander`). Deployment manifests live in
+the owner's homelab repo, not here.
+
+- **Kept small on purpose**, after `claude-complete` and not after
+  `pv-migrate`: no Linux archives or packages, no signing, no attestations.
+  The terminal app is a macOS tool (`open`, `pbcopy`, `osascript`), and Linux
+  gets the server through the image.
+- **The image is not built by GoReleaser.** The Docker build worked before
+  GoReleaser came, so it stayed as its own job.
+- **The cask push needs the `PRIVATE_ACCESS_TOKEN` secret** (contents write on
+  the tap). `GITHUB_TOKEN` cannot write to another repository.
+- **The cask removes the quarantine mark after install**, since the binaries
+  are not notarized and macOS refuses to run them otherwise.
+
+**Dependencies.** Renovate (`.renovaterc.json`) merges every update by itself,
+majors included, straight to main with no pull request, once CI passed on its
+`renovate/**` branch. That is why `build.yml` also runs on those branches.
+The owner wants no noise: a pull request appears only when CI fails on an
+update, which is the one case that needs a person. Versions written in a file
+(golangci-lint in the workflow, svu in the Taskfile) are tracked through a
+`# renovate: depName=...` comment on the line above. The embedded
+`htmx.min.js` is a vendored file and is updated by hand.
 
 ## Merging: fast-forward through the refs API
 
@@ -731,9 +753,8 @@ Or the raw commands: `go build ./...`, `go test ./...`, `golangci-lint run ./...
   tests, lint, build). A release is only a version tag: `task release` checks
   that HEAD is the tip of `origin/main` with a clean tree, picks the next
   version with svu from the commit types since the last tag, and pushes an
-  annotated, unsigned tag, which starts `.github/workflows/image.yml`. That
-  workflow pushes the image and then creates a GitHub release with generated
-  notes. There are no binaries or goreleaser yet, on purpose.
+  annotated, unsigned tag, which starts `.github/workflows/release.yml` (see
+  "Shipping"). `task lint` also runs `goreleaser check`.
 
 Go version: see `go.mod` (currently 1.26.x). Uses generics-era stdlib helpers
 (`min`/`max`, `strings.SplitSeq`) and Go 1.22+ loop semantics (no `x := x`
