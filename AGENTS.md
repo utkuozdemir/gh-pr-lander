@@ -704,6 +704,19 @@ asleep mid-push) report back instead of holding `model.rebasing` forever.
   `internal/engine/auto_test.go`.
 - The TUI is tested by constructing `model` values (with a `State` inside) and
   calling `Update` / action methods directly.
+- **The page's scripts are syntax-checked by a test.** `TestPageScriptsParse`
+  renders the page and runs `node --check` on each inline script. The other
+  server tests only look at the HTML text, so a script the browser refuses
+  passed all of them: a missing `</script>` once broke the copy button, the
+  age counters and the hidden section with tests, lint and screenshots all
+  fine. Without node the test is skipped locally and fails in CI.
+- **A syntax check does not show that a script does the right thing.** When a
+  change touches the page's script, click through it in real Chrome before
+  calling it verified. A screenshot shows the layout, never the behavior.
+  Playwright drives the installed Chrome with no browser download:
+  `uv run --with playwright python script.py` with
+  `p.chromium.launch(channel="chrome")`, then click, read classes and
+  `navigator.clipboard.readText()`, and collect `pageerror` events.
 - `model.Update` returns `tea.Model`; cast back with `updated.(model)`.
 - The terminal footer wraps to the terminal width (`renderFooter`), and
   `renderItemList` subtracts its line count from the room for PRs. On one line

@@ -6,6 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -604,24 +608,41 @@ func TestCardLinksTheTitleAndTheChecksAndCopiesTheURL(t *testing.T) {
 	}
 }
 
-// A script block that is not closed swallows the next one, and the browser
-// then runs neither. Nothing else here would notice: the page still renders.
-func TestPageClosesEveryScriptBlock(t *testing.T) {
+// The page's own scripts must parse. The Go tests only look at the HTML, so a
+// script the browser refuses still passes them: an unclosed <script> once
+// turned two blocks into one that did not parse, and the copy button, the age
+// counters and the hidden section all stopped working with every test green.
+// node only checks the syntax here, it runs nothing.
+func TestPageScriptsParse(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		// CI has node, so the check cannot be skipped where it gates a merge.
+		if os.Getenv("CI") != "" {
+			t.Fatal("node is needed to check the page's scripts")
+		}
+
+		t.Skip("node is not installed")
+	}
+
 	s, _ := testServer(t, readyPR(1, "aaa"))
 
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(rec, req)
 
-	body := rec.Body.String()
-	if opened, closed := strings.Count(
-		body,
-		"<script",
-	), strings.Count(
-		body,
-		"</script>",
-	); opened == 0 ||
-		opened != closed {
-		t.Fatalf("expected every script block to be closed, got %d opened and %d closed", opened, closed)
+	scripts := regexp.MustCompile(`(?s)<script>(.*?)</script>`).FindAllStringSubmatch(rec.Body.String(), -1)
+	if len(scripts) == 0 {
+		t.Fatal("expected the page to have scripts of its own")
+	}
+
+	for i, script := range scripts {
+		file := filepath.Join(t.TempDir(), "script.js")
+		if err := os.WriteFile(file, []byte(script[1]), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		if out, err := exec.CommandContext(t.Context(), node, "--check", file).CombinedOutput(); err != nil {
+			t.Fatalf("script %d of the page does not parse: %s", i+1, out)
+		}
 	}
 }
