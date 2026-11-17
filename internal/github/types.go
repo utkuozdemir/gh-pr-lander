@@ -110,6 +110,17 @@ type contextNode struct {
 	Status     string `json:"status"`     // CheckRun
 	Context    string `json:"context"`    // StatusContext
 	State      string `json:"state"`      // StatusContext
+	// CheckSuite leads to the workflow run a CheckRun belongs to. The run is
+	// nil for a check that GitHub Actions did not create.
+	CheckSuite *checkSuiteNode `json:"checkSuite"` // CheckRun
+}
+
+type checkSuiteNode struct {
+	WorkflowRun *workflowRunNode `json:"workflowRun"`
+}
+
+type workflowRunNode struct {
+	URL string `json:"url"`
 }
 
 type reviewConn struct {
@@ -223,6 +234,7 @@ const prQuery = `query($query: String!, $after: String) {
                       name
                       conclusion
                       status
+                      checkSuite { workflowRun { url } }
                     }
                     ... on StatusContext {
                       context

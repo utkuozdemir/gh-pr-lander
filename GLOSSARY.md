@@ -36,6 +36,10 @@ _Avoid_: merge rule, gate
 Running the failed jobs of a commit's checks again. The re-run count of a pull request is how often that happened for its latest commit, whoever started it, and starts over with a new commit.
 _Avoid_: retry, rerun attempt
 
+**Hidden**:
+A pull request the owner chose not to look at, such as an old one blocked on something. It leaves the list and stops notifying, and nothing else about it changes: it is still watched, and its automerge and re-runs go on. It stays hidden until the owner un-hides it or it is merged or closed.
+_Avoid_: ignored, muted, archived, snoozed
+
 **Terminal app**:
 The tool as run on the owner's own machine, where signing is possible. It works on its own, with no server.
 

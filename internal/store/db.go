@@ -28,6 +28,8 @@ type DB struct {
 	// AutoRebase maps each PR with auto-rebase on to its queue order. Only the
 	// relative order of PRs on the same repo and base branch matters.
 	AutoRebase map[string]int
+	// Hidden is the PRs the owner chose not to look at.
+	Hidden map[string]bool
 }
 
 // dbData is the on-disk YAML shape.
@@ -39,6 +41,7 @@ type dbData struct {
 	AutoRerun     []string             `yaml:"auto_rerun,omitempty"`
 	AutoRerunLast map[string]time.Time `yaml:"auto_rerun_last,omitempty"`
 	AutoRebase    map[string]int       `yaml:"auto_rebase,omitempty"`
+	Hidden        []string             `yaml:"hidden,omitempty"`
 }
 
 // Path returns the location of the db file inside the data dir.
@@ -55,6 +58,7 @@ func Load(dataDir string) (DB, error) {
 		AutoRerun:          make(map[string]bool),
 		AutoRerunLast:      make(map[string]time.Time),
 		AutoRebase:         make(map[string]int),
+		Hidden:             make(map[string]bool),
 	}
 
 	data, err := os.ReadFile(Path(dataDir))
@@ -77,6 +81,10 @@ func Load(dataDir string) (DB, error) {
 
 	for _, key := range d.AutoRerun {
 		db.AutoRerun[key] = true
+	}
+
+	for _, key := range d.Hidden {
+		db.Hidden[key] = true
 	}
 
 	for _, key := range d.AutoMergeResolved {
@@ -116,6 +124,12 @@ func Save(dataDir string, db DB) error {
 	}
 
 	sort.Strings(d.AutoRerun)
+
+	for key := range db.Hidden {
+		d.Hidden = append(d.Hidden, key)
+	}
+
+	sort.Strings(d.Hidden)
 
 	if len(db.AutoRebase) > 0 {
 		d.AutoRebase = db.AutoRebase

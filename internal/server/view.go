@@ -22,6 +22,7 @@ type pageData struct {
 	Version  string
 	Flash    flash
 	PRs      []prView
+	Hidden   []prView // the PRs the owner hid, shown in a section that opens on request
 	Gone     []goneView
 	Fetched  age
 	FetchErr string
@@ -34,6 +35,7 @@ type hints struct {
 	Comments, CommentsAny, CommentsResolved, Autorerun             string
 	Merge, MergeNotReady, Rerun, RerunNothing, Refresh, Open       string
 	Updated, Version, MergeGaveUp, RerunGaveUp, Rerunning          string
+	OpenChecks, Copy, Hide, Unhide, ShowHidden                     string
 }
 
 var pageHints = hints{
@@ -57,6 +59,11 @@ var pageHints = hints{
 	MergeGaveUp:      hint.MergeGaveUp,
 	RerunGaveUp:      hint.RerunGaveUp,
 	Rerunning:        hint.Rerunning,
+	OpenChecks:       hint.OpenChecks,
+	Copy:             hint.Copy,
+	Hide:             hint.Hide,
+	Unhide:           hint.Unhide,
+	ShowHidden:       hint.ShowHidden,
 }
 
 // mark is one piece of a PR's status: its text, the tone to show it in, and
@@ -83,6 +90,9 @@ type prView struct {
 	Title  string
 	URL    string
 	SHA    string
+	// ChecksURL is where the CI text links to.
+	ChecksURL string
+	Hidden    bool
 
 	Badge  mark
 	Base   mark
@@ -112,6 +122,13 @@ type prView struct {
 	// shows the checks as running.
 	Rerunning bool
 }
+
+// Hint gives the templates that are called for one PR the hover texts. Such a
+// template sees only that PR, not the page it is on.
+func (prView) Hint() hints { return pageHints }
+
+// Hint does the same for a PR that left the list.
+func (goneView) Hint() hints { return pageHints }
 
 type goneView struct {
 	Repo   string
@@ -146,6 +163,8 @@ func (s *Server) snapshot() pageData {
 			Title:        p.Title,
 			URL:          p.URL,
 			SHA:          p.HeadSHA,
+			ChecksURL:    p.ChecksURL,
+			Hidden:       s.state.Hidden[key],
 			Badge:        badge(p.OverallStatus),
 			Base:         baseMark(p),
 			CI:           ciMark(p),
@@ -189,7 +208,11 @@ func (s *Server) snapshot() pageData {
 			v.Badge = mark{"RERUN FAIL", toneFail, hint.RerunGaveUp}
 		}
 
-		data.PRs = append(data.PRs, v)
+		if v.Hidden {
+			data.Hidden = append(data.Hidden, v)
+		} else {
+			data.PRs = append(data.PRs, v)
+		}
 	}
 
 	for _, mp := range s.state.SortedMerged() {

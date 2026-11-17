@@ -94,10 +94,16 @@ Or `go run .` from source. All settings have defaults, `--help` for the full lis
 | `K` / `J` | Move selected PR up / down its autorebase queue |
 | `t` | Re-run failed CI jobs |
 | `Enter` / `o` | Open in browser |
+| `O` | Open the checks in browser: the workflow run that failed or is still running, else the largest one |
+| `y` | Copy the PR's URL |
+| `h` | Hide the selected PR, or put a hidden one back |
+| `H` | Show or collapse the hidden PRs |
 | `R` | Refresh now |
 | `j/k` / arrows | Navigate |
 | `?` | Explain every key and status |
 | `q` | Quit |
+
+An old PR that is blocked on something only takes up room. `h` hides it: it leaves the list and stops notifying, and nothing else changes. It is still watched, and its automerge and re-runs go on. The header counts the hidden ones, and `H` lists them below the others, where `h` puts one back. A hidden PR stays hidden until then, or until it is merged or closed.
 
 ## Server
 
@@ -107,7 +113,7 @@ The terminal app only works while it runs, and merging needs no YubiKey. `gh-pr-
 gh-pr-lander serve --listen :8080 --token-file /path/to/token --data-dir /data
 ```
 
-The page lists your PRs with their status. Per PR you can switch automerge and autorerun, merge now, and re-run failed jobs. Next to the Automerge switch, in the same box, are the two things it can wait for: `Approvals` (default, 2 or 3) and `Comments` (any or resolved). Set them before turning automerge on. When a condition is holding automerge back, the row says what it waits for. The server does those, and deletes your fork branch after a merge. It never rebases, since that needs the YubiKey. A PR that is behind waits for the terminal app.
+The page lists your PRs with their status. Per PR you can switch automerge and autorerun, merge now, and re-run failed jobs. Next to the Automerge switch, in the same box, are the two things it can wait for: `Approvals` (default, 2 or 3) and `Comments` (any or resolved). Set them before turning automerge on. When a condition is holding automerge back, the row says what it waits for. The title opens the PR and the button next to it copies its URL, the CI status opens the workflow run on GitHub, and `Hide` moves a PR into a collapsed section below the list (hidden on the page is separate from hidden in the terminal app). The server does those, and deletes your fork branch after a merge. It never rebases, since that needs the YubiKey. A PR that is behind waits for the terminal app.
 
 - **Token:** `--token-file` names a file holding a GitHub token that can write to the repositories (a classic token with the `repo` scope works). Without the flag it falls back to `GITHUB_TOKEN`, `GH_TOKEN` or `gh`, which is handy for trying it locally.
 - **State:** the switches are kept in `db.yaml` under `--data-dir` (default `~/.gh-pr-lander/server`). Give it a volume that survives restarts.

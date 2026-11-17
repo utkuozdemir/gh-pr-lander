@@ -27,20 +27,41 @@ func (m model) View() string {
 
 	items := m.displayItems()
 
+	// The way to the hidden PRs, under the list. Empty when none is hidden.
+	hiddenLine := ""
+
+	if _, hidden := m.Shown(); len(hidden) > 0 && !m.help {
+		action := "shows"
+		if m.showHidden {
+			action = "collapses"
+		}
+
+		hiddenLine = fmt.Sprintf(
+			"\n  %s\n",
+			prDescStyle.Render(fmt.Sprintf("%d hidden · H %s them", len(hidden), action)),
+		)
+	}
+
 	switch {
 	case m.help:
 		b.WriteString(m.renderHelp())
-	case m.loading && len(items) == 0:
+	// With every open PR hidden the list is empty while PRs are loaded, so
+	// "nothing loaded yet" asks for both.
+	case m.loading && len(items) == 0 && len(m.PRs) == 0:
 		b.WriteString("  " + m.spinner.View() + " Loading PRs...")
 		b.WriteString("\n")
-	case m.err != nil && len(items) == 0:
+	case m.err != nil && len(items) == 0 && len(m.PRs) == 0:
 		b.WriteString(errorStyle.Render("  Error: " + m.err.Error()))
 		b.WriteString("\n")
+	case len(items) == 0 && len(m.PRs) > 0:
+		b.WriteString("  Every open PR is hidden.\n")
 	case len(items) == 0:
 		b.WriteString("  No open PRs found.\n")
 	default:
-		b.WriteString(m.renderItemList(items, strings.Count(footer, "\n")+1))
+		b.WriteString(m.renderItemList(items, strings.Count(footer, "\n")+1+strings.Count(hiddenLine, "\n")))
 	}
+
+	b.WriteString(hiddenLine)
 
 	// The help view has the screen to itself. A status line under it would
 	// push its first lines off the top.
@@ -73,12 +94,18 @@ func (m model) renderHeader() string {
 		info = fmt.Sprintf("↻ %s ago", ago)
 	}
 
+	listed, hidden := m.Shown()
+
 	prCount := ""
-	if len(m.PRs) > 0 {
-		prCount = fmt.Sprintf(" · %d PRs", len(m.PRs))
-		if len(m.PRs) == 1 {
+	if len(listed) > 0 {
+		prCount = fmt.Sprintf(" · %d PRs", len(listed))
+		if len(listed) == 1 {
 			prCount = " · 1 PR"
 		}
+	}
+
+	if len(hidden) > 0 {
+		prCount += fmt.Sprintf(" · %d hidden", len(hidden))
 	}
 
 	right := headerInfoStyle.Render(info + prCount)
@@ -148,6 +175,13 @@ func (m model) renderActivePR(p pr.PR, selected bool) string {
 
 	title := truncateDisplayWidth(p.Title, maxTitleWidth)
 	line2 := prTitleStyle.Render(title)
+
+	// A hidden PR is shown dimmed: its title in the color of the status line,
+	// and a mark next to its name.
+	if m.Hidden[key] {
+		line1 = repoRef + "  " + prDescStyle.Render("hidden") + strings.Repeat(" ", max(gap-8, 1)) + badge
+		line2 = prDescStyle.Render(title)
+	}
 
 	base := "Base " + baseIndicator(p)
 	ci := "CI " + ciIndicator(p)
@@ -393,6 +427,9 @@ func (m model) renderFooter() string {
 		{"b", "autorebase"},
 		{"J/K", "queue order"},
 		{"o", "open"},
+		{"O", "checks"},
+		{"y", "copy URL"},
+		{"h", "hide"},
 		{"R", "refresh"},
 		{"?", "help"},
 		{"q", "quit"},

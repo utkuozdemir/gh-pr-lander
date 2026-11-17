@@ -89,7 +89,7 @@ func (s *State) MergeDone(res MergeResult) {
 	// or server error automerge tries again once the cooldown is over.
 	if res.Auto && errors.Is(res.Err, github.ErrMergeRefused) {
 		s.MergeFailed[key] = true
-		notify.Send(notify.AutomergeGaveUp, key+": "+res.Err.Error())
+		s.Notify(key, notify.AutomergeGaveUp, key+": "+res.Err.Error())
 	}
 }
 
@@ -161,7 +161,7 @@ func (s *State) AutoRerunDone(res AutoRerunResult) error {
 	case res.Failed:
 		slog.Error("autorerun gave up", "pr", res.PRKey)
 		s.RerunFailed[res.PRKey] = true
-		notify.Send(notify.AutorerunGaveUp, res.PRKey+" — still failing")
+		s.Notify(res.PRKey, notify.AutorerunGaveUp, res.PRKey+" — still failing")
 	case res.Reran:
 		slog.Info("autorerun triggered", "pr", res.PRKey)
 

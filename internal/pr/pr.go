@@ -87,9 +87,12 @@ func (cs CheckSummary) String() string {
 
 // PR is the domain model for a pull request.
 type PR struct {
-	Number           int
-	Title            string
-	URL              string
+	Number int
+	Title  string
+	URL    string
+	// ChecksURL is the page on GitHub that shows the checks of the head
+	// commit: a workflow run's summary, or the PR's Checks tab without one.
+	ChecksURL        string
 	Repo             string // "acme/widgets"
 	RepoName         string // "widgets"
 	RepoOwner        string // "acme"

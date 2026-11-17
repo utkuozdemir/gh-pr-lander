@@ -40,7 +40,9 @@ What both show today: the PR list with base, CI, review with the approval
 count, resolved/total comments, the automerge and autorerun switches, the
 automerge conditions and what automerge waits for, the re-run count, notes,
 give-up states, recently
-merged PRs, the PR count, refresh, the running version (terminal header, page
+merged PRs, the PR count with the hidden ones, hiding a PR and showing the
+hidden ones, opening the PR and its checks on GitHub, copying the PR's URL,
+refresh, the running version (terminal header, page
 footer), and an explanation of every control and status (hover text on the
 page, the `?` help view in the terminal app, both from `internal/hint`).
 
@@ -259,6 +261,17 @@ Three things to know when changing the page:
   timestamp, so the server's and the browser's clocks never have to agree.
   `ago` in `view.go` and `words` in the script format the same way. The
   terminal app redraws once a second for the same effect (`ageTickMsg`).
+- **The card is one template** (`card`), used for the list and for the hidden
+  section, and `title` is shared with the merged cards. A template called for
+  one PR does not see the page (`$` is the PR), so `prView` and `goneView`
+  hand out the hover texts through a `Hint` method.
+- **Whether the hidden section is open lives in the page's script**
+  (`showHidden`). The `<details>` is inside the list, which is replaced on
+  every poll and every answer, so the script opens it again after each swap.
+  It is not saved: a reload starts collapsed.
+- **Copy falls back to `document.execCommand`.** `navigator.clipboard` exists
+  only on HTTPS and localhost, and the page is also served over plain HTTP on
+  a LAN.
 - **Refresh waits for the fetch it asked for** (`Server.fetched`, a channel
   closed and replaced on every fetch result) and answers with the fresh list.
 
@@ -414,6 +427,46 @@ Both guards run each fetch (`applyChecksSettling(applyRerunSettling(...))`) and
 only ever push toward `CIRunning`, so they compose without fighting. Tested in
 `internal/engine/auto_test.go` (settling) and `internal/github/client_test.go`
 (rollup state), no network or timing flakiness.
+
+## Hidden pull requests
+
+An old PR that is blocked on something only takes up room in the list, so the
+owner can hide it (`h` in the terminal, `Hide` on the page). `internal/engine/hidden.go`
+holds it: `State.Hidden`, saved as the `hidden` list in `db.yaml`.
+
+- **Hiding is display and notifications only.** A hidden PR is still fetched,
+  keeps its automerge, autorerun and place in the autorebase queue, and merges
+  when it is ready with automerge on. Turning those off is its own control.
+- **A hidden PR sends no notification except "merged".** Every notification
+  about a PR goes through `State.Notify`, which is where that is decided. Use
+  it, not `notify.Send`, for anything new.
+- **It never un-hides itself**, not when it becomes ready and not on a new
+  review. It is forgotten when the PR is confirmed gone (`cleanupAuto`).
+- **Per front end**, like the switches: hidden on the page is not hidden in
+  the terminal app.
+- **Front ends.** `State.Shown` splits the PRs into the listed and the hidden
+  ones. Both show "12 PRs · 3 hidden" and a "3 hidden" line under the list that
+  opens a dimmed section (`H` in the terminal, a `<details>` on the page),
+  where every control still works. Open or collapsed is not saved.
+
+## The CI link
+
+The CI text on the page links to the checks on GitHub, and `O` opens the same
+in the terminal app (`pr.PR.ChecksURL`, picked in `checksURL` in
+`internal/github/status.go`). The owner wants the workflow run's summary page,
+the one with the graph of jobs. The PR's Checks tab does not have the graph.
+
+- **A commit has several workflow runs**, so one is picked: a run with a
+  failed check, else one still going, else a finished one, and among equals
+  the run with the most checks. On Omni that is 27 checks against 1, so the
+  main pipeline wins over a labeler.
+- **It costs nothing.** Each `CheckRun` in the search carries
+  `checkSuite { workflowRun { url } }`. Those are plain fields, not
+  connections, so the query still costs 1 (measured), and the link follows
+  the status on every fetch. Asking the Actions REST API per PR was the first
+  idea and was dropped for this.
+- **No workflow run** (an external CI, a status context, no checks at all):
+  the link goes to the PR's Checks tab.
 
 ## Automerge conditions
 
@@ -750,8 +803,8 @@ the generated assignment in real bash to prove it stays literal.
 - **Branch deletion after merge** only happens on forks you own
   (`HeadRepoOwner == client.Username()`), never same-repo branches. See
   `detectMerged`.
-- **`db.yaml` only stores enabled flags, the autorebase queue order and the
-  last autorerun time.** Don't add derived state there, derive it from the API.
+- **`db.yaml` only stores enabled flags, the hidden PRs, the autorebase queue
+  order and the last autorerun time.** Don't add derived state there, derive it from the API.
 - **The tool has no git config of its own.** It used to add
   `include.path = ~/.config/gh-pr-lander/gitconfig` to every clone, for a
   separate identity or signing key. Git does that itself with

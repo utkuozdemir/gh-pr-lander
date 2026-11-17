@@ -391,6 +391,7 @@ func testAutoToggleModel(t *testing.T, p pr.PR) model {
 			ResolvedOnly:     map[string]bool{},
 			AutoRerun:        map[string]bool{},
 			LastAutoRerun:    map[string]time.Time{},
+			Hidden:           map[string]bool{},
 			MergeFailed:      map[string]bool{},
 			RerunFailed:      map[string]bool{},
 			LastAutoCheck:    map[string]time.Time{},
@@ -611,5 +612,67 @@ func TestRowShowsThatARerunWasStarted(t *testing.T) {
 
 	if strings.Contains(m.renderActivePR(p, false), "re-running") {
 		t.Fatal("expected nothing for a new commit")
+	}
+}
+
+func TestHideTakesAPROutOfTheListUntilShown(t *testing.T) {
+	m := testAutoToggleModel(t, pr.PR{Repo: "org/repo", Number: 1, Title: "old and blocked"})
+	m.PRs = append(m.PRs, pr.PR{Repo: "org/repo", Number: 2})
+	m.width = 100
+
+	key := func(m model, k string) model {
+		updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+
+		return updated.(model)
+	}
+
+	m = key(m, "h")
+
+	if items := m.displayItems(); len(items) != 1 || items[0].pr.Number != 2 {
+		t.Fatalf("expected only #2 in the list, got %v", items)
+	}
+
+	if view := m.View(); !strings.Contains(view, "1 PR · 1 hidden") ||
+		!strings.Contains(view, "1 hidden · H shows them") {
+		t.Fatalf("expected the view to count the hidden PR and say how to show it, got %q", view)
+	}
+
+	m = key(m, "H")
+
+	items := m.displayItems()
+	if len(items) != 2 || items[1].pr.Number != 1 {
+		t.Fatalf("expected the hidden PR below the list, got %v", items)
+	}
+
+	if row := m.renderItem(items[1], false); !strings.Contains(row, "hidden") {
+		t.Fatalf("expected the row to be marked as hidden, got %q", row)
+	}
+
+	// On the hidden row, the same key puts it back.
+	m.cursor = 1
+	m = key(m, "h")
+
+	if _, hidden := m.Shown(); len(hidden) != 0 || len(m.displayItems()) != 2 {
+		t.Fatalf("expected the PR back in the list, got hidden %v", hidden)
+	}
+}
+
+func TestViewWithEveryPRHiddenSaysSoAndKeepsOneError(t *testing.T) {
+	m := testAutoToggleModel(t, pr.PR{Repo: "org/repo", Number: 1})
+	m.Hidden["org/repo#1"] = true
+	m.width, m.height = 100, 40
+
+	if view := m.View(); !strings.Contains(view, "Every open PR is hidden.") ||
+		strings.Contains(view, "No open PRs found.") {
+		t.Fatalf("expected the view to say that every PR is hidden, got %q", view)
+	}
+
+	// A refresh and a failed fetch must not look like nothing was ever loaded.
+	m.loading = true
+	m.err = errors.New("boom")
+
+	view := m.View()
+	if strings.Contains(view, "Loading PRs") || strings.Count(view, "boom") != 1 {
+		t.Fatalf("expected no loading screen and the error once, got %q", view)
 	}
 }

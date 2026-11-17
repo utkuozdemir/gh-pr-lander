@@ -550,3 +550,78 @@ func TestRerunButtonShowsThatARerunWasStarted(t *testing.T) {
 		t.Fatalf("expected the plain disabled button once the checks run, got %+v", data.PRs[0])
 	}
 }
+
+func TestHideMovesAPRBelowTheListAndBack(t *testing.T) {
+	s, _ := testServer(t, readyPR(1, "aaa"), readyPR(2, "bbb"))
+	form := url.Values{"key": {"org/repo#1"}, "sha": {"aaa"}}
+
+	_, body := post(t, s, "/hide", form, nil)
+
+	list, hidden, found := strings.Cut(body, `<details id="hidden">`)
+	if !found {
+		t.Fatalf("expected a section for the hidden PR, got %q", body)
+	}
+
+	if strings.Contains(list, "<b>#1</b>") || !strings.Contains(list, "<b>#2</b>") ||
+		!strings.Contains(list, "1 PR · 1 hidden") {
+		t.Fatalf("expected only #2 in the list and both counts, got %q", list)
+	}
+
+	if !strings.Contains(hidden, "<b>#1</b>") || !strings.Contains(hidden, ">Unhide<") ||
+		!strings.Contains(hidden, "Merge now") {
+		t.Fatalf("expected #1 among the hidden ones with its buttons, got %q", hidden)
+	}
+
+	_, body = post(t, s, "/hide", form, nil)
+	if strings.Contains(body, `<details id="hidden">`) || !strings.Contains(body, "2 PRs") {
+		t.Fatalf("expected both PRs back in the list, got %q", body)
+	}
+}
+
+func TestCardLinksTheTitleAndTheChecksAndCopiesTheURL(t *testing.T) {
+	p := readyPR(1, "aaa")
+	p.URL = "https://github.com/org/repo/pull/1"
+	p.ChecksURL = "https://github.com/org/repo/actions/runs/7"
+	p.CIStatus = pr.CIPassed
+
+	s, _ := testServer(t, p)
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/prs", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+
+	for _, want := range []string{
+		`<a href="https://github.com/org/repo/pull/1" target="_blank" rel="noopener" title="` + hint.Open + `">a title</a>`,
+		`data-copy="https://github.com/org/repo/pull/1" title="` + hint.Copy + `"`,
+		`<a class="ok" href="https://github.com/org/repo/actions/runs/7"`,
+		hint.OpenChecks,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected the card to contain %q, got %q", want, body)
+		}
+	}
+}
+
+// A script block that is not closed swallows the next one, and the browser
+// then runs neither. Nothing else here would notice: the page still renders.
+func TestPageClosesEveryScriptBlock(t *testing.T) {
+	s, _ := testServer(t, readyPR(1, "aaa"))
+
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if opened, closed := strings.Count(
+		body,
+		"<script",
+	), strings.Count(
+		body,
+		"</script>",
+	); opened == 0 ||
+		opened != closed {
+		t.Fatalf("expected every script block to be closed, got %d opened and %d closed", opened, closed)
+	}
+}

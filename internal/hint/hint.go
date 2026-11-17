@@ -21,6 +21,11 @@ const (
 	Rerunning        = "A re-run was started. GitHub takes a moment to show it."
 	Refresh          = "Fetch the pull requests from GitHub now."
 	Open             = "Open the pull request on GitHub."
+	OpenChecks       = "Open the checks on GitHub: the workflow run that failed or is still running, else the largest one."
+	Copy             = "Copy the URL of the pull request."
+	Hide             = "Take this pull request out of the list and stop its notifications. Automerge and re-runs go on."
+	Unhide           = "Put this pull request back into the list."
+	ShowHidden       = "Show or collapse the hidden pull requests."
 )
 
 // ApprovalsAtLeast explains an approvals condition of two or more.

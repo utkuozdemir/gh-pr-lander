@@ -66,6 +66,10 @@ type State struct {
 	LastAutoCheck  map[string]time.Time // cooldown gate to avoid API spam
 	RecentlyMerged map[string]*MergedPR // PRs that disappeared (merged/closed)
 
+	// Hidden is the PRs the owner chose not to look at, persisted in db.yaml.
+	// See hidden.go.
+	Hidden map[string]bool
+
 	// RerunInFlight guards against GitHub momentarily reporting "all checks
 	// passed" right after a re-run is triggered (issue #1). While a PR is in
 	// flight, a transient passed state is treated as still-running so automerge
@@ -109,6 +113,7 @@ func New(cfg config.Config, client Client) (*State, error) {
 		AutoRerun:        db.AutoRerun,
 		LastAutoRerun:    db.AutoRerunLast,
 		AutoRebase:       db.AutoRebase,
+		Hidden:           db.Hidden,
 		MergeFailed:      make(map[string]bool),
 		RerunFailed:      make(map[string]bool),
 		LastAutoCheck:    make(map[string]time.Time),
@@ -128,6 +133,7 @@ func (s *State) SaveDB() error {
 		AutoRerun:          s.AutoRerun,
 		AutoRerunLast:      s.LastAutoRerun,
 		AutoRebase:         s.AutoRebase,
+		Hidden:             s.Hidden,
 	})
 }
 

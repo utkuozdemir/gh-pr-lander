@@ -247,7 +247,7 @@ func (m model) handleAutoRebaseResult(msg autoRebaseResultMsg) (tea.Model, tea.C
 
 	m.rebaseState[key] = autoRebaseState{sha: msg.pr.HeadSHA, reason: reason}
 	m.status = errorStyle.Render(fmt.Sprintf("⚡ Autorebase of %s failed: %s. Press b on it to retry", key, reason))
-	notify.Send(notify.AutorebaseNeedsYou, key+": "+reason)
+	m.Notify(key, notify.AutorebaseNeedsYou, key+": "+reason)
 
 	// Other queues can go on, this one stays paused.
 	next := m.autoRebaseCmd()

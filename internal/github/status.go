@@ -65,6 +65,7 @@ func prFromNode(node prNode) pr.PR {
 
 	p.MergeBlocked = strings.EqualFold(node.MergeStateStatus, "BLOCKED")
 	p.CIStatus, p.Checks = computeCIStatus(node)
+	p.ChecksURL = checksURL(node)
 	p.ReviewStatus = computeReviewStatus(node)
 	p.OverallStatus = pr.ComputeOverallStatus(p)
 
@@ -230,6 +231,65 @@ func computeCIStatus(node prNode) (pr.CIStatus, pr.CheckSummary) {
 	}
 
 	return pr.CINone, summary
+}
+
+// checksURL is where to look at the PR's checks on GitHub: the summary page of
+// one workflow run of the head commit, which has the graph of its jobs. A
+// commit usually has several runs, so the one worth looking at is picked: a
+// run with a failed check first, then one that is still going, and among
+// equals the one with the most checks, which is the main pipeline and not a
+// labeler. A PR with no workflow run gets its Checks tab.
+//
+// The run comes with the checks in the search, so it costs no request and
+// follows the status on every fetch.
+func checksURL(node prNode) string {
+	type run struct{ rank, checks int }
+
+	const (
+		done = iota
+		going
+		failed
+	)
+
+	runs := map[string]run{}
+	best := ""
+
+	if len(node.Commits.Nodes) > 0 && node.Commits.Nodes[0].Commit.StatusCheckRollup != nil {
+		for _, ctx := range node.Commits.Nodes[0].Commit.StatusCheckRollup.Contexts.Nodes {
+			if ctx.CheckSuite == nil || ctx.CheckSuite.WorkflowRun == nil {
+				continue
+			}
+
+			rank := going
+
+			if strings.EqualFold(ctx.Status, checkCompleted) {
+				switch strings.ToUpper(ctx.Conclusion) {
+				case stateSuccess, "NEUTRAL", "SKIPPED":
+					rank = done
+				default:
+					rank = failed
+				}
+			}
+
+			url := ctx.CheckSuite.WorkflowRun.URL
+			r := runs[url]
+			r.rank = max(r.rank, rank)
+			r.checks++
+			runs[url] = r
+
+			// Only the run that just changed can have overtaken the best one.
+			// A tie stays with the one seen first, so the pick is stable.
+			if b := runs[best]; best == "" || r.rank > b.rank || r.rank == b.rank && r.checks > b.checks {
+				best = url
+			}
+		}
+	}
+
+	if best == "" {
+		return node.URL + "/checks"
+	}
+
+	return best
 }
 
 func computeReviewStatus(node prNode) pr.ReviewStatus {

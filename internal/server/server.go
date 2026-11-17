@@ -184,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /prs", s.handleList)
 	mux.HandleFunc("POST /toggle", s.handleToggle)
 	mux.HandleFunc("POST /condition", s.handleCondition)
+	mux.HandleFunc("POST /hide", s.handleHide)
 	mux.HandleFunc("POST /merge", s.handleMerge)
 	mux.HandleFunc("POST /rerun", s.handleRerun)
 	mux.HandleFunc("POST /refresh", s.handleRefresh)
@@ -331,6 +332,29 @@ func (s *Server) handleCondition(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "main", flash{})
+}
+
+// handleHide hides a PR, or shows it again when it is hidden.
+func (s *Server) handleHide(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+
+	p, err := s.find(r)
+
+	hidden := false
+	if err == nil {
+		hidden, err = s.state.ToggleHidden(p)
+	}
+
+	s.mu.Unlock()
+
+	switch {
+	case err != nil:
+		s.render(w, "main", flash{Text: err.Error(), Err: true})
+	case hidden:
+		s.render(w, "main", flash{Text: "Hid " + p.RepoShort()})
+	default:
+		s.render(w, "main", flash{Text: p.RepoShort() + " is back in the list"})
+	}
 }
 
 func (s *Server) handleMerge(w http.ResponseWriter, r *http.Request) {

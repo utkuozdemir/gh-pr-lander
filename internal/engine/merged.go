@@ -90,6 +90,14 @@ func (s *State) cleanupAuto() error {
 		}
 	}
 
+	for key := range s.Hidden {
+		if !openPRs[key] && s.isConfirmedGone(key) {
+			delete(s.Hidden, key)
+
+			changed = true
+		}
+	}
+
 	for key := range s.AutoRerun {
 		if !openPRs[key] && s.isConfirmedGone(key) {
 			delete(s.AutoRerun, key)
@@ -154,7 +162,7 @@ func (s *State) checkTransitions() {
 			slog.Info("PR became ready to merge", "pr", key)
 
 			if !s.AutoMerge[key] || s.MergeFailed[key] {
-				notify.Send(notify.ReadyToMerge, body)
+				s.Notify(key, notify.ReadyToMerge, body)
 			}
 		}
 
@@ -162,7 +170,7 @@ func (s *State) checkTransitions() {
 			slog.Info("checks failed", "pr", key)
 
 			if !s.AutorerunWillHandle(p) {
-				notify.Send(notify.ChecksFailed, body)
+				s.Notify(key, notify.ChecksFailed, body)
 			}
 		}
 
@@ -170,7 +178,7 @@ func (s *State) checkTransitions() {
 			slog.Info("PR became stale", "pr", key)
 
 			if !autoRebase {
-				notify.Send(notify.NeedsRebase, body)
+				s.Notify(key, notify.NeedsRebase, body)
 			}
 		}
 	}
@@ -192,7 +200,7 @@ func (s *State) confirmGone(key string, merged bool) {
 		event = notify.Merged
 	}
 
-	notify.Send(event, key+" — "+mp.PR.Title)
+	s.Notify(key, event, key+" — "+mp.PR.Title)
 }
 
 // MergedCheckDone records what the check of a PR that left the list found.

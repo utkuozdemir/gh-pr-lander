@@ -715,3 +715,65 @@ func TestAnnotateWorkflowRunsKeepsTheRerunCountAfterAFailure(t *testing.T) {
 		t.Fatalf("expected no count and no lookup for a new commit, got %d after %d lookups", got.Reruns, requests)
 	}
 }
+
+func TestChecksURLPicksTheRunWorthLookingAt(t *testing.T) {
+	check := func(run, status, conclusion string) contextNode {
+		node := contextNode{TypeName: typeCheckRun, Status: status, Conclusion: conclusion}
+		if run != "" {
+			node.CheckSuite = &checkSuiteNode{WorkflowRun: &workflowRunNode{URL: run}}
+		}
+
+		return node
+	}
+
+	passed := func(run string) contextNode { return check(run, checkCompleted, stateSuccess) }
+
+	for _, tt := range []struct {
+		name   string
+		checks []contextNode
+		want   string
+	}{
+		{
+			"the run with the most checks when all passed",
+			[]contextNode{passed("labeler"), passed("pipeline"), passed("pipeline"), passed("")},
+			"pipeline",
+		},
+		{
+			"a run that is still going before a larger one that passed",
+			[]contextNode{passed("pipeline"), passed("pipeline"), check("docs", "IN_PROGRESS", "")},
+			"docs",
+		},
+		{
+			"a failed run before one that is still going",
+			[]contextNode{check("pipeline", "QUEUED", ""), check("pipeline", "IN_PROGRESS", ""), check("lint", checkCompleted, "FAILURE")},
+			"lint",
+		},
+		{
+			"the Checks tab when no check belongs to a workflow run",
+			[]contextNode{passed(""), {TypeName: "StatusContext", State: stateSuccess}},
+			"https://github.com/org/repo/pull/1/checks",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := checksURL(prNode{
+				URL: "https://github.com/org/repo/pull/1",
+				Commits: commitConn{Nodes: []commitNode{
+					{
+						Commit: commitDetail{
+							StatusCheckRollup: &statusCheckRollup{Contexts: contextConn{Nodes: tt.checks}},
+						},
+					},
+				}},
+			})
+			if got != tt.want {
+				t.Fatalf("expected %q, got %q", tt.want, got)
+			}
+		})
+	}
+
+	if got := checksURL(
+		prNode{URL: "https://github.com/org/repo/pull/1"},
+	); got != "https://github.com/org/repo/pull/1/checks" {
+		t.Fatalf("expected the Checks tab for a PR with no checks, got %q", got)
+	}
+}

@@ -48,6 +48,7 @@ func testState(t *testing.T, p pr.PR) *State {
 		ResolvedOnly:     map[string]bool{},
 		AutoRerun:        map[string]bool{},
 		LastAutoRerun:    map[string]time.Time{},
+		Hidden:           map[string]bool{},
 		LastRerun:        map[string]time.Time{},
 		MergeFailed:      map[string]bool{},
 		RerunFailed:      map[string]bool{},

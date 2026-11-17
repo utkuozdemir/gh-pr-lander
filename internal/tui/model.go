@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -46,6 +47,8 @@ type model struct {
 	lastFetch time.Time
 	status    string
 	spinner   spinner.Model
+
+	showHidden bool // the hidden PRs are listed too, not saved
 
 	help       bool // the help view is shown instead of the list
 	helpOffset int  // how far the help is scrolled down
@@ -99,13 +102,21 @@ func (m *model) triggerRefresh() {
 	}
 }
 
-// displayItems returns active PRs followed by recently merged PRs as one list.
+// displayItems returns the open PRs, then the hidden ones when they are being
+// shown, then the recently merged ones, as one list.
 func (m model) displayItems() []displayItem {
 	merged := m.SortedMerged()
+	listed, hidden := m.Shown()
 	items := make([]displayItem, 0, len(m.PRs)+len(merged))
 
-	for _, p := range m.PRs {
+	for _, p := range listed {
 		items = append(items, displayItem{pr: p})
+	}
+
+	if m.showHidden {
+		for _, p := range hidden {
+			items = append(items, displayItem{pr: p})
+		}
 	}
 
 	for _, mp := range merged {
@@ -261,30 +272,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // Key handling
 
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	items := m.displayItems()
-
-	// The help view covers the list. While it is open the list keys scroll
-	// it, and any other key closes it without doing what it normally does.
 	if m.help {
-		switch msg.String() {
-		case "q", "ctrl+c":
-			m.quitting = true
-
-			return m, tea.Quit
-		case "j", "down":
-			m.helpOffset = min(m.helpOffset+1, m.helpMaxOffset())
-		case "k", "up":
-			m.helpOffset = max(m.helpOffset-1, 0)
-		case "g", "home":
-			m.helpOffset = 0
-		case "G", "end":
-			m.helpOffset = m.helpMaxOffset()
-		default:
-			m.help = false
-		}
-
-		return m, nil
+		return m.handleHelpKey(msg)
 	}
+
+	items := m.displayItems()
 
 	switch msg.String() {
 	case "?":
@@ -346,12 +338,47 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "J":
 		return m.moveInQueue(1)
 	case "o", "enter":
-		return m.openInBrowser()
+		return m.openInBrowser(func(p pr.PR) string { return p.URL })
+	case "O":
+		return m.openInBrowser(func(p pr.PR) string { return p.ChecksURL })
+	case "y":
+		return m.copyURL()
+	case "h":
+		return m.toggleHidden()
+	case "H":
+		m.showHidden = !m.showHidden
+		m.cursor = min(m.cursor, max(0, len(m.displayItems())-1))
+
+		return m, nil
 	case "R", "ctrl+r":
 		m.status = ""
 		m.triggerRefresh()
 
 		return m, nil
+	}
+
+	return m, nil
+}
+
+// handleHelpKey handles a key while the help view covers the list. The list
+// keys scroll it, and any other key closes it without doing what it normally
+// does.
+func (m model) handleHelpKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c":
+		m.quitting = true
+
+		return m, tea.Quit
+	case "j", "down":
+		m.helpOffset = min(m.helpOffset+1, m.helpMaxOffset())
+	case "k", "up":
+		m.helpOffset = max(m.helpOffset-1, 0)
+	case "g", "home":
+		m.helpOffset = 0
+	case "G", "end":
+		m.helpOffset = m.helpMaxOffset()
+	default:
+		m.help = false
 	}
 
 	return m, nil
@@ -452,15 +479,62 @@ func (m model) doApproveWorkflows() (tea.Model, tea.Cmd) {
 	return m, approveWorkflowsCmd(m.Client, item.pr)
 }
 
-func (m model) openInBrowser() (tea.Model, tea.Cmd) {
+// openInBrowser opens a page of the selected PR: the PR itself or its checks.
+func (m model) openInBrowser(page func(pr.PR) string) (tea.Model, tea.Cmd) {
 	item, ok := m.selectedItem()
 	if !ok {
 		return m, nil
 	}
 	// Works on both active and merged PRs. The URL comes from the GitHub API.
-	_ = exec.CommandContext(context.Background(), "open", item.pr.URL).Start()
+	_ = exec.CommandContext(context.Background(), "open", page(item.pr)).Start()
 
 	return m, nil
+}
+
+// copyURL puts the selected PR's URL on the clipboard. It works on merged PRs
+// too.
+func (m model) copyURL() (tea.Model, tea.Cmd) {
+	item, ok := m.selectedItem()
+	if !ok {
+		return m, nil
+	}
+
+	cmd := exec.CommandContext(context.Background(), "pbcopy")
+	cmd.Stdin = strings.NewReader(item.pr.URL)
+
+	if err := cmd.Run(); err != nil {
+		m.status = errorStyle.Render("✗ Failed to copy: " + err.Error())
+	} else {
+		m.status = successStyle.Render("✓ Copied " + item.pr.URL)
+	}
+
+	return m, clearStatusCmd()
+}
+
+// toggleHidden hides the selected PR, or shows it again when it is hidden.
+func (m model) toggleHidden() (tea.Model, tea.Cmd) {
+	item, ok := m.selectedItem()
+	if !ok || item.merged {
+		return m, nil
+	}
+
+	key := item.pr.RepoShort()
+
+	hidden, err := m.ToggleHidden(item.pr)
+
+	switch {
+	case err != nil:
+		m.status = errorStyle.Render("✗ Failed to save db.yaml: " + err.Error())
+	case hidden:
+		m.status = indicatorNone.Render("Hid " + key + ". H shows the hidden ones")
+	default:
+		m.status = indicatorNone.Render(key + " is back in the list")
+	}
+
+	// The row left the list, or moved within it.
+	m.cursor = min(m.cursor, max(0, len(m.displayItems())-1))
+
+	return m, clearStatusCmd()
 }
 
 func (m model) toggleAuto(kind engine.Kind) (tea.Model, tea.Cmd) {
